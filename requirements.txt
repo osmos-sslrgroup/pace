@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+phreeqpython
+pydantic
+matplotlib
+numpy
+python-docx
+pymupdf

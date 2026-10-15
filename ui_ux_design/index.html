@@ -1,0 +1,2350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PACE — Permionics Analytical Calculation Engine</title>
+    <meta name="description" content="PACE: Permionics membrane process design and projection software for RO/NF system engineering.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css?v=53">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+            vertical-align: middle;
+            font-size: 18px;
+            line-height: 1;
+        }
+    </style>
+</head>
+<body>
+
+
+
+    <div class="container">
+        <header class="top-header">
+            <div class="header-left">
+                <img src="permionics_web.svg?v=3" alt="Permionics Logo" class="brand-logo">
+                <span class="brand-title" style="font-family: 'Plus Jakarta Sans', sans-serif;">PACE</span>
+                <button class="btn-membrane-db pace-locked-tab" id="membrane-db-btn" onclick="handleMembraneDbClick(event)">
+                    <i class="fa-solid fa-lock pace-lock-icon"></i> Membrane Directory
+                </button>
+            </div>
+            <div class="header-right">
+                <button class="btn-primary" id="run-analysis-btn">Run Analysis</button>
+                <div class="header-icons">
+                    <button class="icon-btn" id="theme-toggle-btn" title="Toggle Theme">
+                        <i class="fa-solid fa-moon"></i>
+                    </button>
+                    <button class="icon-btn"><i class="fa-regular fa-bell"></i></button>
+                    <button class="icon-btn"><i class="fa-solid fa-gear"></i></button>
+                    <div class="user-profile" onclick="openUserInfoModal()" title="User Information">WT</div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Menu Bar Navigation -->
+        <nav class="menu-bar">
+            <!-- File Tab -->
+            <button class="menu-btn" id="file-tab-btn">
+                <i class="fa-solid fa-folder"></i> FILE
+                <i class="fa-solid fa-chevron-down" style="font-size:9px;opacity:0.7;"></i>
+            </button>
+            <!-- Project Details Tab -->
+            <button class="menu-btn" id="project-details-tab-btn">
+                <i class="fa-solid fa-folder-open"></i> PROJECT INFO
+            </button>
+            <!-- Lockable tabs -->
+            <button class="menu-btn pace-locked-tab" id="feed-data-tab-btn" title="Complete Project Details first">
+                <i class="fa-solid fa-database" style="color:#3D53D7;"></i>
+                <i class="fa-solid fa-lock pace-lock-icon"></i> FEED DATA
+            </button>
+            <button class="menu-btn pace-locked-tab" id="scaling-tab-btn" title="Complete Project Details first">
+                <i class="fa-solid fa-triangle-exclamation" style="color:#f97316;"></i>
+                <i class="fa-solid fa-lock pace-lock-icon"></i> SCALING &amp; FOULING
+            </button>
+            <button class="menu-btn pace-locked-tab" id="process-tab-btn" title="Complete Project Details first">
+                <i class="fa-solid fa-wand-magic-sparkles" style="color:#a855f7;"></i>
+                <i class="fa-solid fa-lock pace-lock-icon"></i> PROCESS REC
+            </button>
+            <button class="menu-btn pace-locked-tab" id="calculation-tab-btn" title="Complete Project Details first">
+                <i class="fa-solid fa-calculator" style="color:#3b82f6;"></i>
+                <i class="fa-solid fa-lock pace-lock-icon"></i> CALCULATION
+            </button>
+            <button class="menu-btn pace-locked-tab" id="report-tab-btn" title="Complete Project Details first">
+                <i class="fa-solid fa-chart-bar" style="color:#ef4444;"></i>
+                <i class="fa-solid fa-lock pace-lock-icon"></i> REPORT
+            </button>
+        </nav>
+
+        <!-- Lock toast notification -->
+        <div id="pace-lock-toast" style="
+            display: none; position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
+            background: #1e293b; color: white; padding: 0.65rem 1.4rem; border-radius: 10px;
+            font-size: 0.82rem; font-weight: 600; z-index: 9998; box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+            display: none; align-items: center; gap: 0.6rem; white-space: nowrap;
+        ">
+            <i class="fa-solid fa-lock" style="color:#f59e0b;"></i>
+            Please complete <strong style="color:#818cf8;">&nbsp;Project Details&nbsp;</strong> before accessing this module.
+        </div>
+
+        <!-- File Management in-page panel (shown when file-tab-btn is active) -->
+        <div id="file-panel-view" style="display: none; flex-direction: column; flex: 1; padding: 2rem; min-height: calc(100vh - 120px);">
+            <div style="width: 100%; height: 100%; display: grid; grid-template-columns: 2fr 1.5fr; gap: 2rem; flex: 1;">
+                
+                <!-- Project Actions Card -->
+                <section class="card" style="margin-bottom:0; display: flex; flex-direction: column; box-shadow: 0 8px 24px rgba(0,0,0,0.08);">
+                    <div class="card-header" style="padding: 1.25rem;">
+                        <h2 class="card-title" style="font-size: 1.1rem;"><i class="fa-solid fa-rocket" style="color: rgba(255,255,255,0.8);"></i> Project Actions</h2>
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.5rem; padding: 2rem; flex: 1;">
+                        <button class="btn quick-action-btn new-proj" onclick="startNewProject()" style="padding: 2rem 1rem; display: flex; flex-direction: column; justify-content: center;">
+                            <i class="fa-solid fa-file-circle-plus" style="font-size: 3.5rem; color: #10b981; margin-bottom: 1rem;"></i>
+                            <span style="font-weight: 700; font-size: 1.1rem;">New Project</span>
+                        </button>
+                        <button class="btn quick-action-btn open-proj" onclick="loadProjectFromFile()" style="padding: 2rem 1rem; display: flex; flex-direction: column; justify-content: center;">
+                            <i class="fa-solid fa-folder-open" style="font-size: 3.5rem; color: #f59e0b; margin-bottom: 1rem;"></i>
+                            <span style="font-weight: 700; font-size: 1.1rem;">Open Project</span>
+                        </button>
+                        <button class="btn quick-action-btn save-proj" onclick="saveProjectDetails(event)" style="padding: 2rem 1rem; display: flex; flex-direction: column; justify-content: center;">
+                            <i class="fa-solid fa-floppy-disk" style="font-size: 3.5rem; color: #3b82f6; margin-bottom: 1rem;"></i>
+                            <span style="font-weight: 700; font-size: 1.1rem;">Save Project</span>
+                        </button>
+                        <button class="btn quick-action-btn export-water" onclick="exportWaterAnalysis()" style="padding: 2rem 1rem; display: flex; flex-direction: column; justify-content: center;">
+                            <i class="fa-solid fa-file-export" style="font-size: 3.5rem; color: #8b5cf6; margin-bottom: 1rem;"></i>
+                            <span style="font-weight: 700; font-size: 1.1rem;">Export Water Analysis</span>
+                        </button>
+                    </div>
+                </section>
+
+                <!-- Recent Files Card -->
+                <section class="card" style="margin-bottom:0; display: flex; flex-direction: column; box-shadow: 0 8px 24px rgba(0,0,0,0.08);">
+                    <div class="card-header" style="padding: 1.25rem;">
+                        <h2 class="card-title" style="font-size: 1.1rem;"><i class="fa-solid fa-clock-rotate-left" style="color: rgba(255,255,255,0.8);"></i> Recent Files</h2>
+                    </div>
+                    <div id="file-recent-list" style="display: flex; flex-direction: column; gap: 1rem; flex: 1; overflow-y: auto; padding: 2rem;">
+                        <!-- Populated dynamically or static for UI -->
+                        <div class="recent-file-btn" onclick="alert('Loading Project_Seawater_RO.prt...')" style="padding: 1.5rem; border: 1px solid var(--color-outline-variant); border-radius: 8px; cursor: pointer; display: flex; gap: 1.5rem; align-items: center; transition: all 0.2s;">
+                            <i class="fa-solid fa-file-lines" style="color:#6366f1; font-size:2rem; flex-shrink:0;"></i>
+                            <div style="flex:1; overflow:hidden;">
+                                <div class="file-title" style="font-weight: 700; font-size: 1.1rem; color: var(--color-on-surface); margin-bottom: 0.3rem;">Project_Seawater_RO.prt</div>
+                                <div style="font-size:0.9rem; color: var(--color-on-surface-variant);">Saved 2 hours ago</div>
+                            </div>
+                        </div>
+                        <div class="recent-file-btn" onclick="alert('Loading Industrial_Wastewater_Project.prt...')" style="padding: 1.5rem; border: 1px solid var(--color-outline-variant); border-radius: 8px; cursor: pointer; display: flex; gap: 1.5rem; align-items: center; transition: all 0.2s;">
+                            <i class="fa-solid fa-file-lines" style="color:#6366f1; font-size:2rem; flex-shrink:0;"></i>
+                            <div style="flex:1; overflow:hidden;">
+                                <div class="file-title" style="font-weight: 700; font-size: 1.1rem; color: var(--color-on-surface); margin-bottom: 0.3rem;">Industrial_Wastewater_Project.prt</div>
+                                <div style="font-size:0.9rem; color: var(--color-on-surface-variant);">Saved 1 day ago</div>
+                            </div>
+                        </div>
+                        <div class="recent-file-btn" onclick="alert('Loading Tap_Water_Projection.prt...')" style="padding: 1.5rem; border: 1px solid var(--color-outline-variant); border-radius: 8px; cursor: pointer; display: flex; gap: 1.5rem; align-items: center; transition: all 0.2s;">
+                            <i class="fa-solid fa-file-lines" style="color:#6366f1; font-size:2rem; flex-shrink:0;"></i>
+                            <div style="flex:1; overflow:hidden;">
+                                <div class="file-title" style="font-weight: 700; font-size: 1.1rem; color: var(--color-on-surface); margin-bottom: 0.3rem;">Tap_Water_Projection.prt</div>
+                                <div style="font-size:0.9rem; color: var(--color-on-surface-variant);">Saved 3 days ago</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- Project Details in-page panel (shown when project-details-tab-btn is active) -->
+        <div id="project-details-panel-view" style="display: none; flex-direction: column; padding: 16px;">
+
+            <!-- Page Title -->
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
+                <div class="page-title-block" style="margin-bottom: 0;">
+                    <h1 class="page-title">Project Information</h1>
+                    <p class="page-subtitle">Manage project identity, case revisions, and authorship details.</p>
+                </div>
+                <button class="btn-danger" onclick="clearProjectModal()" style="padding: 8px 16px; white-space: nowrap; flex-shrink: 0;">
+                    <i class="fa-solid fa-trash-can"></i> Delete Current Project
+                </button>
+            </div>
+
+            <!-- 4-Card Grid Layout -->
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1rem;">
+                
+                <!-- Card 1: PROJECT IDENTITY -->
+                <section class="card" style="margin: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--card-border);">
+                    <div class="card-banner-header">
+                        PROJECT IDENTITY
+                    </div>
+                    <div style="padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; flex: 1; background: var(--card-bg);">
+                        <div class="input-group">
+                            <label class="mock-label">PROJECT NAME</label>
+                            <div style="position: relative;">
+                                <input type="text" id="proj-name" placeholder="e.g. Coastal WTP - Phase 2" oninput="validateProjectModal()" style="width: 100%; padding-right: 2.5rem;">
+                                <i class="fa-solid fa-magnifying-glass" style="position: absolute; right: 0.75rem; top: 50%; transform: translateY(-50%); color: var(--text-secondary);"></i>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label class="mock-label">PROJECT ID</label>
+                            <input type="text" id="proj-id" placeholder="e.g. PACE-2026-0701-8412" style="font-family: monospace;">
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                            <div class="input-group">
+                                <label class="mock-label">COMPANY</label>
+                                <input type="text" id="proj-company" placeholder="Client company">
+                            </div>
+                            <div class="input-group">
+                                <label class="mock-label">CUSTOMER</label>
+                                <input type="text" id="proj-customer" placeholder="Customer name">
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label class="mock-label">COUNTRY</label>
+                            <select id="proj-country">
+                                <option value="">Select Country / Region</option>
+                                <option value="Afghanistan">Afghanistan</option>
+                                <option value="Albania">Albania</option>
+                                <option value="Algeria">Algeria</option>
+                                <option value="Andorra">Andorra</option>
+                                <option value="Angola">Angola</option>
+                                <option value="Antigua and Barbuda">Antigua and Barbuda</option>
+                                <option value="Argentina">Argentina</option>
+                                <option value="Armenia">Armenia</option>
+                                <option value="Australia">Australia</option>
+                                <option value="Austria">Austria</option>
+                                <option value="Azerbaijan">Azerbaijan</option>
+                                <option value="Bahamas">Bahamas</option>
+                                <option value="Bahrain">Bahrain</option>
+                                <option value="Bangladesh">Bangladesh</option>
+                                <option value="Barbados">Barbados</option>
+                                <option value="Belarus">Belarus</option>
+                                <option value="Belgium">Belgium</option>
+                                <option value="Belize">Belize</option>
+                                <option value="Benin">Benin</option>
+                                <option value="Bhutan">Bhutan</option>
+                                <option value="Bolivia">Bolivia</option>
+                                <option value="Bosnia and Herzegovina">Bosnia and Herzegovina</option>
+                                <option value="Botswana">Botswana</option>
+                                <option value="Brazil">Brazil</option>
+                                <option value="Brunei">Brunei</option>
+                                <option value="Bulgaria">Bulgaria</option>
+                                <option value="Burkina Faso">Burkina Faso</option>
+                                <option value="Burundi">Burundi</option>
+                                <option value="Cabo Verde">Cabo Verde</option>
+                                <option value="Cambodia">Cambodia</option>
+                                <option value="Cameroon">Cameroon</option>
+                                <option value="Canada">Canada</option>
+                                <option value="Central African Republic">Central African Republic</option>
+                                <option value="Chad">Chad</option>
+                                <option value="Chile">Chile</option>
+                                <option value="China">China</option>
+                                <option value="Colombia">Colombia</option>
+                                <option value="Comoros">Comoros</option>
+                                <option value="Congo">Congo</option>
+                                <option value="Costa Rica">Costa Rica</option>
+                                <option value="Croatia">Croatia</option>
+                                <option value="Cuba">Cuba</option>
+                                <option value="Cyprus">Cyprus</option>
+                                <option value="Czechia">Czechia</option>
+                                <option value="Denmark">Denmark</option>
+                                <option value="Djibouti">Djibouti</option>
+                                <option value="Dominica">Dominica</option>
+                                <option value="Dominican Republic">Dominican Republic</option>
+                                <option value="Ecuador">Ecuador</option>
+                                <option value="Egypt">Egypt</option>
+                                <option value="El Salvador">El Salvador</option>
+                                <option value="Equatorial Guinea">Equatorial Guinea</option>
+                                <option value="Eritrea">Eritrea</option>
+                                <option value="Estonia">Estonia</option>
+                                <option value="Eswatini">Eswatini</option>
+                                <option value="Ethiopia">Ethiopia</option>
+                                <option value="Fiji">Fiji</option>
+                                <option value="Finland">Finland</option>
+                                <option value="France">France</option>
+                                <option value="Gabon">Gabon</option>
+                                <option value="Gambia">Gambia</option>
+                                <option value="Georgia">Georgia</option>
+                                <option value="Germany">Germany</option>
+                                <option value="Ghana">Ghana</option>
+                                <option value="Greece">Greece</option>
+                                <option value="Grenada">Grenada</option>
+                                <option value="Guatemala">Guatemala</option>
+                                <option value="Guinea">Guinea</option>
+                                <option value="Guinea-Bissau">Guinea-Bissau</option>
+                                <option value="Guyana">Guyana</option>
+                                <option value="Haiti">Haiti</option>
+                                <option value="Honduras">Honduras</option>
+                                <option value="Hungary">Hungary</option>
+                                <option value="Iceland">Iceland</option>
+                                <option value="India">India</option>
+                                <option value="Indonesia">Indonesia</option>
+                                <option value="Iran">Iran</option>
+                                <option value="Iraq">Iraq</option>
+                                <option value="Ireland">Ireland</option>
+                                <option value="Israel">Israel</option>
+                                <option value="Italy">Italy</option>
+                                <option value="Ivory Coast">Ivory Coast</option>
+                                <option value="Jamaica">Jamaica</option>
+                                <option value="Japan">Japan</option>
+                                <option value="Jordan">Jordan</option>
+                                <option value="Kazakhstan">Kazakhstan</option>
+                                <option value="Kenya">Kenya</option>
+                                <option value="Kiribati">Kiribati</option>
+                                <option value="Kuwait">Kuwait</option>
+                                <option value="Kyrgyzstan">Kyrgyzstan</option>
+                                <option value="Laos">Laos</option>
+                                <option value="Latvia">Latvia</option>
+                                <option value="Lebanon">Lebanon</option>
+                                <option value="Lesotho">Lesotho</option>
+                                <option value="Liberia">Liberia</option>
+                                <option value="Libya">Libya</option>
+                                <option value="Liechtenstein">Liechtenstein</option>
+                                <option value="Lithuania">Lithuania</option>
+                                <option value="Luxembourg">Luxembourg</option>
+                                <option value="Madagascar">Madagascar</option>
+                                <option value="Malawi">Malawi</option>
+                                <option value="Malaysia">Malaysia</option>
+                                <option value="Maldives">Maldives</option>
+                                <option value="Mali">Mali</option>
+                                <option value="Malta">Malta</option>
+                                <option value="Marshall Islands">Marshall Islands</option>
+                                <option value="Mauritania">Mauritania</option>
+                                <option value="Mauritius">Mauritius</option>
+                                <option value="Mexico">Mexico</option>
+                                <option value="Micronesia">Micronesia</option>
+                                <option value="Moldova">Moldova</option>
+                                <option value="Monaco">Monaco</option>
+                                <option value="Mongolia">Mongolia</option>
+                                <option value="Montenegro">Montenegro</option>
+                                <option value="Morocco">Morocco</option>
+                                <option value="Mozambique">Mozambique</option>
+                                <option value="Myanmar">Myanmar</option>
+                                <option value="Namibia">Namibia</option>
+                                <option value="Nauru">Nauru</option>
+                                <option value="Nepal">Nepal</option>
+                                <option value="Netherlands">Netherlands</option>
+                                <option value="New Zealand">New Zealand</option>
+                                <option value="Nicaragua">Nicaragua</option>
+                                <option value="Niger">Niger</option>
+                                <option value="Nigeria">Nigeria</option>
+                                <option value="North Korea">North Korea</option>
+                                <option value="North Macedonia">North Macedonia</option>
+                                <option value="Norway">Norway</option>
+                                <option value="Oman">Oman</option>
+                                <option value="Pakistan">Pakistan</option>
+                                <option value="Palau">Palau</option>
+                                <option value="Palestine">Palestine</option>
+                                <option value="Panama">Panama</option>
+                                <option value="Papua New Guinea">Papua New Guinea</option>
+                                <option value="Paraguay">Paraguay</option>
+                                <option value="Peru">Peru</option>
+                                <option value="Philippines">Philippines</option>
+                                <option value="Poland">Poland</option>
+                                <option value="Portugal">Portugal</option>
+                                <option value="Qatar">Qatar</option>
+                                <option value="Romania">Romania</option>
+                                <option value="Russia">Russia</option>
+                                <option value="Rwanda">Rwanda</option>
+                                <option value="Saint Kitts and Nevis">Saint Kitts and Nevis</option>
+                                <option value="Saint Lucia">Saint Lucia</option>
+                                <option value="Saint Vincent">Saint Vincent</option>
+                                <option value="Samoa">Samoa</option>
+                                <option value="San Marino">San Marino</option>
+                                <option value="Sao Tome and Principe">Sao Tome and Principe</option>
+                                <option value="Saudi Arabia">Saudi Arabia</option>
+                                <option value="Senegal">Senegal</option>
+                                <option value="Serbia">Serbia</option>
+                                <option value="Seychelles">Seychelles</option>
+                                <option value="Sierra Leone">Sierra Leone</option>
+                                <option value="Singapore">Singapore</option>
+                                <option value="Slovakia">Slovakia</option>
+                                <option value="Slovenia">Slovenia</option>
+                                <option value="Solomon Islands">Solomon Islands</option>
+                                <option value="Somalia">Somalia</option>
+                                <option value="South Africa">South Africa</option>
+                                <option value="South Korea">South Korea</option>
+                                <option value="South Sudan">South Sudan</option>
+                                <option value="Spain">Spain</option>
+                                <option value="Sri Lanka">Sri Lanka</option>
+                                <option value="Sudan">Sudan</option>
+                                <option value="Suriname">Suriname</option>
+                                <option value="Sweden">Sweden</option>
+                                <option value="Switzerland">Switzerland</option>
+                                <option value="Syria">Syria</option>
+                                <option value="Taiwan">Taiwan</option>
+                                <option value="Tajikistan">Tajikistan</option>
+                                <option value="Tanzania">Tanzania</option>
+                                <option value="Thailand">Thailand</option>
+                                <option value="Timor-Leste">Timor-Leste</option>
+                                <option value="Togo">Togo</option>
+                                <option value="Tonga">Tonga</option>
+                                <option value="Trinidad and Tobago">Trinidad and Tobago</option>
+                                <option value="Tunisia">Tunisia</option>
+                                <option value="Turkey">Turkey</option>
+                                <option value="Turkmenistan">Turkmenistan</option>
+                                <option value="Tuvalu">Tuvalu</option>
+                                <option value="Uganda">Uganda</option>
+                                <option value="Ukraine">Ukraine</option>
+                                <option value="United Arab Emirates">United Arab Emirates</option>
+                                <option value="United Kingdom">United Kingdom</option>
+                                <option value="United States">United States</option>
+                                <option value="Uruguay">Uruguay</option>
+                                <option value="Uzbekistan">Uzbekistan</option>
+                                <option value="Vanuatu">Vanuatu</option>
+                                <option value="Venezuela">Venezuela</option>
+                                <option value="Vietnam">Vietnam</option>
+                                <option value="Yemen">Yemen</option>
+                                <option value="Zambia">Zambia</option>
+                                <option value="Zimbabwe">Zimbabwe</option>
+                            </select>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Card 2: PERSONNEL -->
+                <section class="card" style="margin: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--card-border);">
+                    <div class="card-banner-header">
+                        PERSONNEL
+                    </div>
+                    <div style="padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; flex: 1; background: var(--card-bg);">
+                        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                            <div class="input-group">
+                                <label class="mock-label">ENGINEER / PREPARED BY</label>
+                                <input type="text" id="proj-engineer" placeholder="Name" oninput="validateProjectModal()">
+                            </div>
+                            <div class="input-group">
+                                <label class="mock-label">USERNAME</label>
+                                <input type="text" id="proj-username" placeholder="domain\user">
+                            </div>
+                        </div>
+                        <div class="input-group" style="flex: 1; display: flex; flex-direction: column;">
+                            <label class="mock-label">PREPARED FOR</label>
+                            <textarea id="proj-client" placeholder="Recipient / plant contact details..." style="flex: 1; min-height: 70px; width: 100%; resize: vertical; padding: 0.6rem; border: 1px solid var(--input-border); border-radius: 4px; background: var(--input-bg); color: var(--text-primary); font-family: inherit;"></textarea>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Card 3: CASE & REVISION -->
+                <section class="card" style="margin: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--card-border);">
+                    <div class="card-banner-header">
+                        CASE & REVISION
+                    </div>
+                    <div style="padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; flex: 1; background: var(--card-bg);">
+                        <div style="display: grid; grid-template-columns: 1fr auto; gap: 0.75rem; align-items: end;">
+                            <div class="input-group">
+                                <label class="mock-label">CASE NUMBER</label>
+                                <select id="proj-case-no">
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                    <option value="3">3</option>
+                                </select>
+                            </div>
+                            <button class="btn" style="border: 1px solid var(--input-border); background: transparent; color: var(--text-primary); font-weight: 600; padding: 0.6rem 1rem;"><i class="fa-solid fa-plus"></i> New Case</button>
+                        </div>
+                        <div class="input-group">
+                            <label class="mock-label">CASE DESCRIPTION</label>
+                            <input type="text" id="proj-case-desc" placeholder="Case Description">
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr auto; gap: 0.75rem; align-items: end;">
+                            <div class="input-group">
+                                <label class="mock-label">REVISION</label>
+                                <select id="proj-revision">
+                                    <option value="0">0</option>
+                                    <option value="1">1</option>
+                                    <option value="A">A</option>
+                                    <option value="B">B</option>
+                                </select>
+                            </div>
+                            <button class="btn" style="border: 1px solid #ef4444; background: transparent; color: #ef4444; font-weight: 600; padding: 0.6rem 1rem;"><i class="fa-solid fa-trash-can"></i> Delete Revision</button>
+                        </div>
+                        <div class="input-group">
+                            <label class="mock-label">REVISION DESCRIPTION</label>
+                            <input type="text" id="proj-rev-desc" placeholder="Revision Description">
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Card 4: DATES & VERSION -->
+                <section class="card" style="margin: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--card-border);">
+                    <div class="card-banner-header">
+                        DATES & VERSION
+                    </div>
+                    <div style="padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; flex: 1; background: var(--card-bg);">
+                        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                            <div class="input-group">
+                                <label class="mock-label">DATE CREATED</label>
+                                <input type="text" id="proj-date-created" readonly style="background: rgba(0,0,0,0.02); color: var(--text-secondary);">
+                            </div>
+                            <div class="input-group">
+                                <label class="mock-label">DATE LAST REVISED</label>
+                                <input type="text" id="proj-date-revised" readonly style="background: rgba(0,0,0,0.02); color: var(--text-secondary);">
+                            </div>
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                            <div class="input-group">
+                                <label class="mock-label">RUN DATE</label>
+                                <div style="position: relative;">
+                                    <input type="date" id="proj-date" style="width: 100%;">
+                                </div>
+                            </div>
+                            <div class="input-group">
+                                <label class="mock-label">PACE VERSION</label>
+                                <input type="text" id="proj-pace-version" value="V1.0" readonly style="background: rgba(0,0,0,0.02); color: var(--text-secondary);">
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Notes & Footer Bar -->
+            <section class="card" style="margin: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--card-border);">
+                <div class="card-banner-header">
+                    NOTES & DOCUMENTATION
+                </div>
+                <!-- Note: To preserve previous proj-notes textarea, it's added here under Notes banner before the footer actions -->
+                <div style="padding: 1rem 1.5rem; background: var(--card-bg);">
+                    <textarea id="proj-notes" rows="3" placeholder="Notes, assumptions, scope..." style="width:100%; background:var(--input-bg); border:1px solid var(--input-border); border-radius:4px; color:var(--text-primary); font-family:inherit; font-size:0.85rem; padding:0.4rem 0.5rem; resize:vertical; outline:none;"></textarea>
+                </div>
+                <div style="padding: 1rem 1.5rem; display: flex; justify-content: space-between; align-items: center; background: var(--card-bg); border-top: 1px solid var(--card-border);">
+                    <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-primary); letter-spacing: 0.5px;">
+                        PROJECT STATUS: <span style="color: var(--text-secondary);">DRAFT</span> <span style="margin: 0 0.5rem; color: var(--card-border);">|</span> LAST SAVED: <span style="color: var(--text-secondary); font-style: italic;" id="proj-last-saved-status">NOT YET SAVED</span>
+                    </div>
+                    <div style="display: flex; gap: 0.75rem;">
+                        <button class="btn" style="border: 1px solid var(--card-border); background: transparent; color: var(--text-primary); font-weight: 600; padding: 0.6rem 1.2rem; border-radius: 4px;" onclick="window.location.reload()">Start New Project</button>
+                        <button class="btn" style="border: 1px solid var(--card-border); background: transparent; color: var(--text-primary); font-weight: 600; padding: 0.6rem 1.2rem; border-radius: 4px;" onclick="loadProjectFromFile()">Open Project</button>
+                        <button class="btn" style="border: 1px solid var(--accent-color); color: var(--accent-color); background: transparent; font-weight: 600; padding: 0.6rem 1.2rem; border-radius: 4px;" onclick="saveProjectDetails(event)">Save As New Revision</button>
+                        <button class="btn" id="proj-proceed-btn" style="background: #1d4ed8; border: none; color: white; font-weight: 700; padding: 0.6rem 1.5rem; border-radius: 4px; box-shadow: 0 2px 4px rgba(29, 78, 216, 0.3);" onclick="proceedToApp()">SAVE & Proceed</button>
+                    </div>
+                </div>
+            </section>
+            
+        </div>
+
+        <!-- Scaling & Fouling Analysis View -->
+        <div class="dashboard" id="scaling-panel-view" style="display: none; grid-template-columns: 1fr 450px; gap: 16px; padding: 16px;">
+
+            <main style="display: flex; flex-direction: column; gap: 12px;">
+                <section class="card" style="height: 100%; display: flex; flex-direction: column; margin-bottom: 0;">
+                    <div class="card-header">
+                        <h2 class="card-title" style="color: white; font-weight: 700; text-transform: uppercase; font-size: 1.1rem; letter-spacing: 0.5px;"><i class="fa-solid fa-triangle-exclamation" style="color: rgba(255,255,255,0.8);"></i> SCALING & FOULING INDICES</h2>
+                    </div>
+                    <div class="card-content" style="flex: 1; display: flex; flex-direction: column;">
+                        <h3 style="margin-top: 0; margin-bottom: 12px; color: var(--color-on-surface-variant); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;">Saturation Indices (Feed Water)</h3>
+
+                        <div class="si-grid">
+                            <div class="si-card">
+                                <span class="si-label" style="font-size: 0.75rem; letter-spacing: 0.5px;">GYPSUM (CaSO<sub>4</sub>·2H<sub>2</sub>O)</span>
+                                <span class="si-value" id="si-gypsum">--</span>
+                                <div class="si-bar-container"><div class="si-bar" id="si-bar-gypsum"></div></div>
+                            </div>
+                            <div class="si-card">
+                                <span class="si-label" style="font-size: 0.75rem; letter-spacing: 0.5px;">ANHYDRITE (CaSO<sub>4</sub>)</span>
+                                <span class="si-value" id="si-anhydrite">--</span>
+                                <div class="si-bar-container"><div class="si-bar" id="si-bar-anhydrite"></div></div>
+                            </div>
+                            <div class="si-card">
+                                <span class="si-label" style="font-size: 0.75rem; letter-spacing: 0.5px;">CALCITE (CaCO<sub>3</sub>)</span>
+                                <span class="si-value" id="si-calcite">--</span>
+                                <div class="si-bar-container"><div class="si-bar" id="si-bar-calcite"></div></div>
+                            </div>
+                            <div class="si-card">
+                                <span class="si-label" style="font-size: 0.75rem; letter-spacing: 0.5px;">BARITE (BaSO<sub>4</sub>)</span>
+                                <span class="si-value" id="si-barite">--</span>
+                                <div class="si-bar-container"><div class="si-bar" id="si-bar-barite"></div></div>
+                            </div>
+                            <div class="si-card">
+                                <span class="si-label" style="font-size: 0.75rem; letter-spacing: 0.5px;">CELESTITE (SrSO<sub>4</sub>)</span>
+                                <span class="si-value" id="si-srso4">--</span>
+                                <div class="si-bar-container"><div class="si-bar" id="si-bar-srso4"></div></div>
+                            </div>
+                            <div class="si-card">
+                                <span class="si-label" style="font-size: 0.75rem; letter-spacing: 0.5px;">FLUORITE (CaF<sub>2</sub>)</span>
+                                <span class="si-value" id="si-caf2">--</span>
+                                <div class="si-bar-container"><div class="si-bar" id="si-bar-caf2"></div></div>
+                            </div>
+                            <div class="si-card">
+                                <span class="si-label" style="font-size: 0.75rem; letter-spacing: 0.5px;">SILICA (SiO<sub>2</sub>)</span>
+                                <span class="si-value" id="si-silica">--</span>
+                                <div class="si-bar-container"><div class="si-bar" id="si-bar-silica"></div></div>
+                            </div>
+
+                            <div class="si-card">
+                                <span class="si-label" style="font-size: 0.75rem; letter-spacing: 0.5px;">IRON (Fe(OH)<sub>3</sub>)</span>
+                                <span class="si-value" id="si-fe">--</span>
+                                <div class="si-bar-container"><div class="si-bar" id="si-bar-fe"></div></div>
+                            </div>
+                            <div class="si-card">
+                                <span class="si-label" style="font-size: 0.75rem; letter-spacing: 0.5px;">ALUMINUM (Al(OH)<sub>3</sub>)</span>
+                                <span class="si-value" id="si-al">--</span>
+                                <div class="si-bar-container"><div class="si-bar" id="si-bar-al"></div></div>
+                            </div>
+                            <div class="si-card">
+                                <span class="si-label" style="font-size: 0.75rem; letter-spacing: 0.5px;">PYROLUSITE (MnO<sub>2</sub>)</span>
+                                <span class="si-value" id="si-mn">--</span>
+                                <div class="si-bar-container"><div class="si-bar" id="si-bar-mn"></div></div>
+                            </div>
+                            <div class="si-card">
+                                <span class="si-label" style="font-size: 0.75rem; letter-spacing: 0.5px;">HYDROXYAPATITE (Ca<sub>5</sub>(PO<sub>4</sub>)<sub>3</sub>(OH))</span>
+                                <span class="si-value" id="si-po4">--</span>
+                                <div class="si-bar-container"><div class="si-bar" id="si-bar-po4"></div></div>
+                            </div>
+                        </div>
+                        <div style="margin-top: 1rem; font-size: 0.7rem; color: var(--text-secondary); text-align: center; font-style: italic; opacity: 0.8; padding-top: 1rem; border-top: 1px solid var(--card-border);">
+                            * Saturation indices are calculated using the PHREEQC thermodynamic database developed by the USGS.
+                        </div>
+                    </div>
+                </section>
+            </main>
+
+            <aside class="results-panel" style="height: 100%;">
+                <section class="card" style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 0; height: 100%;">
+                    <div class="card-header">
+                        <h2 class="card-title"><i class="fa-solid fa-chart-bar" style="color: rgba(255,255,255,0.8);"></i> SATURATION VISUALIZATION</h2>
+                    </div>
+                    <div class="card-content" style="display: flex; flex-direction: column; gap: 1.5rem; padding: 1.5rem;">
+                        <!-- Custom Legend -->
+                        <div style="display: flex; gap: 2rem; align-items: center; margin-bottom: 1rem; font-size: 0.75rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <div style="width: 12px; height: 12px; background-color: #4f46e5; border-radius: 2px;"></div>
+                                <span>SATURATION INDEX (LOG10)</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <div style="width: 12px; height: 2px; background-color: #ef4444;"></div>
+                                <span>CRITICAL THRESHOLD</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <div style="width: 12px; height: 12px; background-color: #ef4444; border-radius: 50%;"></div>
+                                <span>SCALING RISK</span>
+                            </div>
+                        </div>
+                        <!-- Chart Container -->
+                        <div style="width: 100%; height: 400px; background: transparent; border-radius: 8px;">
+                            <canvas id="siChart"></canvas>
+                        </div>
+                        <div style="margin-top: auto; text-align: center;">
+                            <button class="btn" id="run-phreeqc-btn" style="width: 100%; padding: 1rem 2rem; font-size: 1.1rem; background-color: #3b5bdb; color: white; border-radius: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;"><i class="fa-solid fa-bolt" style="margin-right: 0.5rem;"></i> RUN SCALING ANALYSIS</button>
+                        </div>
+                    </div>
+                </section>
+            </aside>
+        </div>
+
+        <!-- Module Placeholder View (for other tabs) -->
+        <div class="tab-placeholder" id="tab-placeholder-view" style="display: none;">
+            <div class="placeholder-card">
+                <i class="fa-solid fa-circle-nodes placeholder-icon"></i>
+                <h2 id="placeholder-title">Module Title</h2>
+                <p id="placeholder-desc">This module is under development and will be integrated in the next projection phase.</p>
+                <button class="btn" style="width: auto; margin-top: 1.5rem; padding: 0.5rem 1.5rem;" onclick="document.getElementById('feed-data-tab-btn').click();">
+                    <i class="fa-solid fa-arrow-left"></i> Return to Feed Data
+                </button>
+            </div>
+        </div>
+
+        <!-- Process Recommendation View -->
+        <div class="dashboard" id="process-dashboard-view" style="display: none; grid-template-columns: 1fr 350px; gap: 16px; padding: 16px;">
+            <main class="data-entry" style="display: flex; flex-direction: column; gap: 12px;">
+                <!-- Top Row: Config and Confidence -->
+                <div style="display: grid; grid-template-columns: 1.5fr 1fr; gap: 1.5rem;">
+                    <!-- Primary Config Display -->
+                    <section class="card" style="display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 2.5rem; background: linear-gradient(135deg, rgba(30,58,138,0.25), rgba(0, 0, 0, 0.05)); border: 1px solid rgba(59,130,246,0.3); box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
+                        <h3 style="margin: 0; color: var(--text-secondary); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700;">Recommended Configuration</h3>
+                        <div id="process-primary-config" style="font-size: 3.5rem; font-weight: 900; color: #60a5fa; margin: 0.8rem 0; font-family: 'Inter', sans-serif; text-shadow: 0 0 20px rgba(96, 165, 250, 0.4);">--</div>
+                        <div id="process-ro-variant" style="font-size: 1.1rem; color: var(--text-primary); font-weight: 600; padding: 0.4rem 1.2rem; background: rgba(0, 0, 0, 0.05); border: 1px solid rgba(0, 0, 0, 0.05); border-radius: 20px; letter-spacing: 0.03em;">--</div>
+                        <div id="process-alternate-config" style="margin-top: 1rem; font-size: 0.85rem; color: #94a3b8; font-weight: 500;"><i class="fa-solid fa-code-branch" style="margin-right: 0.3rem;"></i> Alternate: --</div>
+                    </section>
+
+                    <!-- Confidence Score -->
+                    <section class="card" style="display: flex; flex-direction: column; justify-content: center; align-items: center; position: relative; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+                        <h3 style="margin-top: 0; margin-bottom: 1.2rem; color: var(--text-secondary); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700;">Data Confidence</h3>
+                        
+                        <!-- Simple CSS Donut Chart for Confidence -->
+                        <div style="position: relative; width: 120px; height: 120px; border-radius: 50%; background: conic-gradient(var(--success-color) 0%, rgba(0, 0, 0, 0.1) 0%); display: flex; align-items: center; justify-content: center; transition: background 0.5s ease;" id="confidence-ring">
+                            <div style="width: 96px; height: 96px; background: var(--card-bg); border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: inset 0 4px 8px rgba(0,0,0,0.4);">
+                                <span id="process-confidence-score" style="font-size: 2.2rem; font-weight: 800; color: var(--text-primary); font-family: 'Inter', sans-serif;">--</span>
+                                <span style="font-size: 0.65rem; color: var(--text-secondary); font-weight: 700; letter-spacing: 0.05em; margin-top: -2px;">SCORE</span>
+                            </div>
+                        </div>
+                        <div id="process-confidence-level" style="margin-top: 1.2rem; font-size: 0.82rem; font-weight: 700; padding: 0.25rem 1rem; border-radius: 20px; letter-spacing: 0.05em; text-transform: uppercase;">--</div>
+                    </section>
+                </div>
+
+
+                <!-- Recommended Process Flow -->
+                <section class="card" id="process-flow-card" style="display: none; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+                    <div class="card-header">
+                        <h2 class="card-title">Recommended Process Flow</h2>
+                    </div>
+                    <div id="process-flow-diagram" style="margin-top: 1.2rem; display: flex; align-items: center; justify-content: flex-start; gap: 0.8rem; padding: 1.5rem 1rem; background: rgba(0, 0, 0, 0.05); border-radius: 6px; border: 1px solid var(--card-border); overflow-x: auto;">
+                        <!-- Flow steps will be injected here -->
+                    </div>
+                </section>
+
+                <!-- Required Pre-treatment -->
+                <section class="card" id="pretreatment-box" style="display: none; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+                    <div class="card-header">
+                        <h2 class="card-title">Required Pre-treatment Guidelines</h2>
+                    </div>
+                    <div id="pretreatment-text" style="margin-top: 1.2rem; font-size: 0.95rem; line-height: 1.6; color: var(--text-primary);">
+                        <!-- Pre-treatment recommendations go here -->
+                    </div>
+                </section>
+            </main>
+
+            <aside class="results-panel">
+                <div class="sidebar-section">
+                    <!-- Control Panel Card -->
+                    <section class="card" style="display: flex; flex-direction: column; gap: 1rem; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+                        <div class="card-header">
+                            <h2 class="card-title">Design Control</h2>
+                        </div>
+                        <div class="input-group" style="margin-top: 0.5rem;">
+                            <label style="font-size: 0.78rem; font-weight: 700; color: var(--text-secondary); margin-bottom: 0.5rem; display: block; text-transform: uppercase; letter-spacing: 0.06em;">Target Permeate TDS (mg/L)</label>
+                            <input type="number" id="target-tds" value="50" step="1" min="1" max="1000" style="width: 100%; padding: 0.7rem; background: rgba(0, 0, 0, 0.05); border: 1px solid var(--card-border); border-radius: 4px; color: var(--text-primary); font-family: 'Inter', sans-serif; font-weight: 600; transition: var(--transition);">
+                        </div>
+                        <button class="btn" id="run-process-btn" style="width: 100%; padding: 0.9rem; font-size: 0.95rem; font-weight: 600; background: linear-gradient(135deg, #2563eb, #1d4ed8); border: none; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2); transition: var(--transition); display: flex; align-items: center; justify-content: center; gap: 0.5rem;" onclick="fetchProcessRecommendation()">
+                            <i class="fa-solid fa-microchip"></i> Run Process Solver
+                        </button>
+                    </section>
+
+                    <!-- Assessment Flags Card -->
+                    <section class="card" style="flex-grow: 1; display: flex; flex-direction: column; min-height: 250px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+                        <div class="card-header">
+                            <h2 class="card-title">Assessment Flags</h2>
+                        </div>
+                        <div style="flex-grow: 1; overflow-y: auto; padding-right: 0.2rem; margin-top: 1rem;" id="process-flags-container">
+                            <div style="text-align: center; color: var(--text-secondary); padding: 2rem 0;">
+                                <i class="fa-solid fa-circle-check" style="font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.3;"></i><br>
+                                Run the solver to view engineering flags.
+                            </div>
+                        </div>
+                    </section>
+                </div>
+             </aside>
+         </div>
+
+         
+
+
+        
+        <!-- Calculation Panel View -->
+        <div class="dashboard" id="calculation-panel-view" style="display: none; grid-template-columns: 340px 1fr; gap: 16px; padding: 16px;">
+            <!-- Left Column: Settings -->
+            <aside class="data-entry" style="display: flex; flex-direction: column; gap: 12px; overflow-y: auto; max-height: calc(100vh - 140px); padding-right: 4px;">
+                <section class="card">
+                    <div class="card-header">
+                        <h2 class="card-title">System Configuration</h2>
+                    </div>
+                    <div class="input-grid">
+                        <div class="input-group">
+                            <label>Technology Train</label>
+                            <select id="calc-tech-train">
+                                <option value="RO">RO Only</option>
+                                <option value="UF+RO">UF + RO</option>
+                                <option value="2P-RO">Two-Pass RO</option>
+                                <option value="UF+2P-RO">UF + Two-Pass RO</option>
+                            </select>
+                        </div>
+
+                        
+                        <div class="input-group">
+                            <label>Target Recovery <span class="unit">%</span></label>
+                            <input type="number" id="calc-target-recovery" value="75.0" step="1">
+                        </div>
+                    </div>
+                    <div id="calc-recycle-container" style="padding: 1rem 16px; border-top: 1px solid var(--card-border);">
+                        <h3 style="font-size: 1rem; margin-bottom: 1rem; color: var(--primary-color);"><i class="fa-solid fa-recycle"></i> Concentrate Recycle</h3>
+                        <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+                            <label class="switch">
+                                <input type="checkbox" id="calc-recycle-enable">
+                                <span class="slider round"></span>
+                            </label>
+                            <span style="color: var(--text-color); font-weight: 500;">Enable Concentrate Recycle</span>
+                        </div>
+                        <div id="calc-recycle-options" style="display: none; background: rgba(0,0,0,0.05); padding: 1rem; border-radius: 6px;">
+                            <label style="display: block; margin-bottom: 0.5rem; color: var(--text-color);">Recycle Ratio (<span id="calc-recycle-val">0</span>%)</label>
+                            <input type="range" id="calc-recycle-ratio" min="0" max="100" value="0" style="width: 100%; cursor: pointer;">
+                            <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.3rem;">
+                                <span>0%</span>
+                                <span>100%</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <div id="calc-pass1-container">
+                <section class="card">
+                    <div class="card-header">
+                        <h2 class="card-title" id="pass1-membrane-title">Membrane Selection</h2>
+                    </div>
+                    <div class="input-grid">
+                        <div class="input-group">
+                            <label>RO/NF Membrane Model</label>
+                            <select id="calc-ro-membrane">
+                                <option value="HPA-RO-8040">Permionics HPA-RO-8040 (BWRO)</option>
+                                <option value="HPA-4040">Permionics HPA-4040 (BWRO)</option>
+                                <option value="HPA-RO-8040-LF-WW">Permionics HPA-RO-8040-LF-WW (BWRO)</option>
+                                <option value="HPA-RO-4040-LF-WW">Permionics HPA-RO-4040-LF-WW (BWRO)</option>
+                                <option value="HPA-RO-8040-SR">Permionics HPA-RO-8040-SR (BWRO)</option>
+                                <option value="HPA-RO-4040-SR">Permionics HPA-RO-4040-SR (BWRO)</option>
+                                <option value="HPA-RO-8040-HR">Permionics HPA-RO-8040-HR (BWRO)</option>
+                                <option value="HPA-RO-4040-HR">Permionics HPA-RO-4040-HR (BWRO)</option>
+                                <option value="SWRO-8040-400">Permionics SWRO-8040-400 (SWRO)</option>
+                                <option value="SWRO-4040-100">Permionics SWRO-4040-100 (SWRO)</option>
+                                <option value="SWRO-FR-8040-400">Permionics SWRO-FR-8040-400 (SWRO)</option>
+                            </select>
+                        </div>
+                        <div class="input-group" id="calc-uf-module-group" style="display: none;">
+                            <label>UF Module Model</label>
+                            <select id="calc-uf-module">
+                                <option value="IntegraTec-SFD-2880">IntegraTec SFD-2880</option>
+                                <option value="SFP-2860">DuPont SFP-2860</option>
+                            </select>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="card">
+                    <div class="card-header">
+                        <h2 class="card-title" id="pass1-array-title">RO/NF System Array</h2>
+                    </div>
+                    <div class="input-grid">
+                        <div class="input-group">
+                            <label>Number of Stages</label>
+                            <input type="number" id="calc-stages" value="2" min="1" max="4">
+                        </div>
+                        <div class="input-group">
+                            <label>Elements per Vessel</label>
+                            <input type="number" id="calc-elements-pv" value="6" min="1" max="8">
+                        </div>
+                        <div class="input-group" style="grid-column: span 2;">
+                            <label>Vessels per Stage (comma separated)</label>
+                            <input type="text" id="calc-vessels-array" value="4, 2" placeholder="e.g. 4, 2">
+                        </div>
+                    </div>
+                </section>
+                </div>
+                
+                <div id="calc-pass2-container" style="display: none; margin-top: 1rem; padding-top: 1rem; border-top: 2px dashed var(--card-border);">
+                <section class="card">
+                    <div class="card-header">
+                        <h2 class="card-title">Interstage Conditioning</h2>
+                    </div>
+                    <div class="input-grid">
+                        <div class="input-group">
+                            <label>Enable pH Adjustment</label>
+                            <select id="calc-cond-enabled">
+                                <option value="false">No</option>
+                                <option value="true">Yes</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label>Target pH</label>
+                            <input type="number" id="calc-cond-ph" value="9.8" step="0.1" min="1" max="14">
+                        </div>
+                        <div class="input-group">
+                            <label>Chemical</label>
+                            <select id="calc-cond-chem">
+                                <option value="NaOH">NaOH (Caustic)</option>
+                                <option value="H2SO4">H<sub>2</sub>SO<sub>4</sub> (Sulfuric Acid)</option>
+                                <option value="HCl">HCl (Hydrochloric Acid)</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label><span>CO<sub>2</sub> Degassing</span></label>
+                            <select id="calc-cond-degas">
+                                <option value="false">No</option>
+                                <option value="true">Yes</option>
+                            </select>
+                        </div>
+                    </div>
+                </section>
+                <section class="card">
+                    <div class="card-header">
+                        <h2 class="card-title">Pass 2 Membrane</h2>
+                    </div>
+                    <div class="input-grid">
+                        <div class="input-group">
+                            <label>Pass 2 Membrane Model</label>
+                            <select id="calc-p2-membrane">
+                                <option value="HPA-RO-8040">Permionics HPA-RO-8040 (BWRO)</option>
+                                <option value="HPA-4040">Permionics HPA-4040 (BWRO)</option>
+                                <option value="HPA-RO-8040-LF-WW">Permionics HPA-RO-8040-LF-WW (BWRO)</option>
+                                <option value="HPA-RO-4040-LF-WW">Permionics HPA-RO-4040-LF-WW (BWRO)</option>
+                                <option value="HPA-RO-8040-SR">Permionics HPA-RO-8040-SR (BWRO)</option>
+                                <option value="HPA-RO-4040-SR">Permionics HPA-RO-4040-SR (BWRO)</option>
+                                <option value="HPA-RO-8040-HR">Permionics HPA-RO-8040-HR (BWRO)</option>
+                                <option value="HPA-RO-4040-HR">Permionics HPA-RO-4040-HR (BWRO)</option>
+                                <option value="SWRO-8040-400">Permionics SWRO-8040-400 (SWRO)</option>
+                                <option value="SWRO-4040-100">Permionics SWRO-4040-100 (SWRO)</option>
+                                <option value="SWRO-FR-8040-400">Permionics SWRO-FR-8040-400 (SWRO)</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label>Target Recovery <span class="unit">%</span></label>
+                            <input type="number" id="calc-p2-recovery" value="85.0" step="1">
+                        </div>
+                    </div>
+                </section>
+                <section class="card">
+                    <div class="card-header">
+                        <h2 class="card-title">Pass 2 System Array</h2>
+                    </div>
+                    <div class="input-grid">
+                        <div class="input-group">
+                            <label>Number of Stages</label>
+                            <input type="number" id="calc-p2-stages" value="1" min="1" max="4">
+                        </div>
+                        <div class="input-group">
+                            <label>Elements per Vessel</label>
+                            <input type="number" id="calc-p2-elements-pv" value="6" min="1" max="8">
+                        </div>
+                        <div class="input-group" style="grid-column: span 2;">
+                            <label>Vessels per Stage</label>
+                            <input type="text" id="calc-p2-vessels-array" value="2" placeholder="e.g. 2">
+                        </div>
+                    </div>
+                </section>
+                </div>
+
+                
+                <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+                <!-- Physics-Based Year Projection Panel           -->
+                <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+                <section class="card" id="calc-physics-panel" style="border: 2px solid rgba(99, 102, 241, 0.4); background: linear-gradient(135deg, rgba(99,102,241,0.05), rgba(139,92,246,0.05));">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <h2 class="card-title" style="color: #6366f1;">Year-Wise Performance</h2>
+                        <label class="switch" style="transform: scale(0.85);">
+                            <input type="checkbox" id="calc-physics-enable" onchange="togglePhysicsPanel()">
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+
+                    <div id="calc-physics-options" style="display: none; padding: 12px 16px;">
+                        <div style="margin-bottom: 0.9rem;">
+                            <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-bottom: 0.4rem;">Projection Year</label>
+                            <div style="display: flex; gap: 0.3rem; flex-wrap: wrap;" id="calc-physics-year-pills">
+                                <button class="physics-year-pill active" id="phys-pill-0" onclick="selectPhysicsYear(0)" style="padding: 0.3rem 0.7rem; border-radius: 20px; border: 1.5px solid #6366f1; background: #6366f1; color: white; font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">Year 0</button>
+                                <button class="physics-year-pill" id="phys-pill-1" onclick="selectPhysicsYear(1)" style="padding: 0.3rem 0.7rem; border-radius: 20px; border: 1.5px solid #6366f1; background: transparent; color: #6366f1; font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">Year 1</button>
+                                <button class="physics-year-pill" id="phys-pill-2" onclick="selectPhysicsYear(2)" style="padding: 0.3rem 0.7rem; border-radius: 20px; border: 1.5px solid #6366f1; background: transparent; color: #6366f1; font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">Year 2</button>
+                                <button class="physics-year-pill" id="phys-pill-3" onclick="selectPhysicsYear(3)" style="padding: 0.3rem 0.7rem; border-radius: 20px; border: 1.5px solid #6366f1; background: transparent; color: #6366f1; font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">Year 3</button>
+                                <button class="physics-year-pill" id="phys-pill-4" onclick="selectPhysicsYear(4)" style="padding: 0.3rem 0.7rem; border-radius: 20px; border: 1.5px solid #6366f1; background: transparent; color: #6366f1; font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">Year 4</button>
+                                <button class="physics-year-pill" id="phys-pill-5" onclick="selectPhysicsYear(5)" style="padding: 0.3rem 0.7rem; border-radius: 20px; border: 1.5px solid #6366f1; background: transparent; color: #6366f1; font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">Year 5</button>
+                            </div>
+                        </div>
+
+                        <!-- CIP Protocol -->
+                        <div class="input-grid" style="margin-bottom: 0.5rem; padding: 0;">
+                            <div class="input-group">
+                                <label>CIP Interval <span class="unit">months</span></label>
+                                <input type="number" id="phys-cip-interval" value="0" min="0" max="60" step="1"
+                                    oninput="const d=document.getElementById('aging-cip-interval-display'); if(d) d.value=this.value; const h=document.getElementById('aging-cip-interval'); if(h) h.value=this.value*30;">
+                            </div>
+                            <div class="input-group">
+                                <label>Antiscalant Dosed</label>
+                                <select id="phys-antiscalant" onchange="const cb = document.getElementById('aging-antiscalant'); if(cb) cb.checked = (this.value === 'true');">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Hidden selected year storage -->
+                        <input type="hidden" id="phys-selected-year" value="0">
+                    </div>
+                </section>
+
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <button class="btn" id="calc-run-btn" style="padding: 1rem; font-size: 1.0rem; background: linear-gradient(135deg, #1e40af, #2563eb);">
+                        <i class="fa-solid fa-calculator"></i> Run Detailed Calculation
+                    </button>
+                    <button class="btn" id="run-membrane-rec-btn" style="padding: 1rem; font-size: 1.0rem; background: linear-gradient(135deg, #2563eb, #1d4ed8);" onclick="fetchMembraneRecommendation()">
+                        <i class="fa-solid fa-microchip"></i> Recommend Membrane
+                    </button>
+                </div>
+                
+            </aside>
+
+
+            <main class="results" style="display: flex; flex-direction: column; gap: 1rem; height: 100%; min-width: 0;">
+            <!-- Right Column: Results -->
+                            <div id="calc-loading-indicator" style="display: none; text-align: center; padding: 2rem;">
+                    <i class="fa-solid fa-circle-notch fa-spin fa-2x" style="color: var(--primary-color);"></i>
+                    <p style="margin-top: 1rem; color: var(--text-color);">Running Element-wise Hydraulic & Transport Simulation...</p>
+                </div>
+
+                <div id="calc-results-container" style="display: none; flex-direction: column; gap: 1rem; height: 100%;">
+                    <!-- Sub-tabs for Calculation Results -->
+                    <div class="menu-bar" style="margin-bottom: 0.5rem; padding: 0.2rem; background: rgba(0, 0, 0, 0.05); border-radius: 4px; display: flex; gap: 0.2rem; overflow-x: auto; white-space: nowrap;">
+                        
+                        <button class="menu-btn active" id="calc-subtab-overview" onclick="switchCalcSubTab('overview', event)" style="flex: none; justify-content: center; padding: 0.25rem 0.75rem; font-size: 9.5px; gap: 3px;">
+                            <i class="fa-solid fa-square-poll-horizontal"></i> Overview
+                        </button>
+                        <button class="menu-btn" id="calc-subtab-membrane" onclick="switchCalcSubTab('membrane', event)" style="flex: none; justify-content: center; padding: 0.25rem 0.75rem; font-size: 9.5px; gap: 3px;">
+                            <i class="fa-solid fa-layer-group"></i> Membrane Recommendation
+                        </button>
+                        <button class="menu-btn" id="calc-subtab-hydraulic" onclick="switchCalcSubTab('hydraulic', event)" style="flex: none; justify-content: center; padding: 0.25rem 0.75rem; font-size: 9.5px; gap: 3px;">
+                            <i class="fa-solid fa-list-ol"></i> Hydraulic Profile
+                        </button>
+                        <button class="menu-btn" id="calc-subtab-ion" onclick="switchCalcSubTab('ion', event)" style="flex: none; justify-content: center; padding: 0.25rem 0.75rem; font-size: 9.5px; gap: 3px;">
+                            <i class="fa-solid fa-flask"></i> Ion Profile
+                        </button>
+                        <button class="menu-btn" id="calc-subtab-economics" onclick="switchCalcSubTab('economics', event)" style="flex: none; justify-content: center; padding: 0.25rem 0.75rem; font-size: 9.5px; gap: 3px;">
+                            <i class="fa-solid fa-indian-rupee-sign"></i> Economic Analysis
+                        </button>
+                        <button class="menu-btn" id="calc-subtab-pfd" onclick="switchCalcSubTab('pfd', event)" style="flex: none; justify-content: center; padding: 0.25rem 0.75rem; font-size: 9.5px; gap: 3px;">
+                            <i class="fa-solid fa-project-diagram"></i> Process Diagram
+                        </button>
+                        <button class="menu-btn" id="calc-subtab-physics" onclick="switchCalcSubTab('physics', event)" style="flex: none; justify-content: center; color: #818cf8; border-color: rgba(99,102,241,0.3); padding: 0.25rem 0.75rem; font-size: 9.5px; gap: 3px;">
+                            <i class="fa-solid fa-atom"></i> Year-Wise Performance
+                        </button>
+                    </div>
+
+                    <!-- Scrollable wrapper for active tab content -->
+                    <div id="calc-results-scroll-wrapper" style="overflow-y: auto; max-height: calc(100vh - 185px); flex-grow: 1; padding-right: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem;">
+                        <!-- SUBTAB: Overview -->
+                        <div id="calc-content-overview" style="display: flex; flex-direction: column; gap: 0.5rem; width: 100%; flex-grow: 1;">
+                            <!-- UF Overview (if applicable) -->
+                            <section class="card" id="calc-uf-results-card" style="display: none;">
+                                <div class="card-header">
+                                    <h2 class="card-title">UF Summary</h2>
+                                </div>
+                                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem;">
+                                    <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                        <div class="telemetry-label">Total UF Modules</div>
+                                        <div class="telemetry-val" id="calc-uf-modules" style="font-size: 1.4rem;">-</div>
+                                    </div>
+                                    <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                        <div class="telemetry-label">Operating Flux</div>
+                                        <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-uf-flux">-</span> <span id="calc-uf-flux-unit" style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">LMH</span></div>
+                                    </div>
+                                    <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                        <div class="telemetry-label">UF Recovery</div>
+                                        <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-uf-rec">-</span> <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">%</span></div>
+                                    </div>
+                                    <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                        <div class="telemetry-label">Design TMP</div>
+                                        <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-uf-tmp">-</span> <span id="calc-uf-tmp-unit" style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">bar</span></div>
+                                    </div>
+                                </div>
+                            </section>
+
+                             <!-- Standard Single-Pass RO System Summary -->
+                             <section class="card" id="calc-single-pass-summary-card">
+                                 <div class="card-header">
+                                     <h2 class="card-title">RO/NF System Summary</h2>
+                                 </div>
+                                 <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem;">
+                                     <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                         <div class="telemetry-label">System Recovery</div>
+                                         <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-sys-rec">-</span> <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">%</span></div>
+                                     </div>
+                                     <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                         <div class="telemetry-label">Permeate Flow</div>
+                                         <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-sys-perm-flow">-</span> <span id="calc-sys-perm-flow-unit" style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">m³/h</span></div>
+                                     </div>
+                                     <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                         <div class="telemetry-label">Feed Pressure</div>
+                                         <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-sys-press">-</span> <span id="calc-sys-press-unit" style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">bar</span></div>
+                                     </div>
+                                     <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                         <div class="telemetry-label">Permeate TDS</div>
+                                         <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-sys-tds">-</span> <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">mg/L</span></div>
+                                     </div>
+                                     <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                         <div class="telemetry-label">Specific Energy</div>
+                                         <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-sys-sec">-</span> <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">kWh/m³</span></div>
+                                     </div>
+                                 </div>
+                             </section>
+
+                             <!-- Two-Pass RO System Summary (Visible only in 2P-RO mode) -->
+                             <div id="calc-two-pass-summary-container" style="display: none; flex-direction: column; gap: 0.5rem;">
+                                 <!-- Pass 1 Overview Panel -->
+                                 <section class="card" style="border-color: rgba(99, 102, 241, 0.2);">
+                                     <div class="card-header" style="background: rgba(99, 102, 241, 0.03);">
+                                         <h2 class="card-title" style="color: var(--primary-color);">Pass 1 Details (Primary RO)</h2>
+                                     </div>
+                                     <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem; padding: 0.5rem 1rem 1rem 1rem;">
+                                         <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                             <div class="telemetry-label">Pass 1 Recovery</div>
+                                             <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-2p-p1-rec">-</span> <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">%</span></div>
+                                         </div>
+                                         <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                             <div class="telemetry-label">Pass 1 Permeate Flow</div>
+                                             <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-2p-p1-flow-summary">-</span> <span id="calc-2p-p1-flow-summary-unit" style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">m³/h</span></div>
+                                         </div>
+                                         <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                             <div class="telemetry-label">Pass 1 Feed Pressure</div>
+                                             <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-2p-p1-press">-</span> <span id="calc-2p-p1-press-unit" style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">bar</span></div>
+                                         </div>
+                                         <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                             <div class="telemetry-label">Pass 1 Permeate TDS</div>
+                                             <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-2p-p1-tds-summary">-</span> <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">mg/L</span></div>
+                                         </div>
+                                         <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                             <div class="telemetry-label">Pass 1 Specific Energy</div>
+                                             <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-2p-p1-sec">-</span> <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">kWh/m³</span></div>
+                                         </div>
+                                     </div>
+                                 </section>
+
+                                 <!-- Pass 2 Overview Panel -->
+                                 <section class="card" style="border-color: rgba(16, 185, 129, 0.2);">
+                                     <div class="card-header" style="background: rgba(16, 185, 129, 0.03);">
+                                         <h2 class="card-title" style="color: #10b981;">Pass 2 Details (Secondary RO)</h2>
+                                     </div>
+                                     <div style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 1rem; padding: 0.5rem 1rem 1rem 1rem;">
+                                         <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                             <div class="telemetry-label">Pass 2 Recovery</div>
+                                             <div class="telemetry-val" style="font-size: 1.4rem; color: #10b981;"><span id="calc-2p-p2-rec">-</span> <span style="font-size: 0.75rem; font-weight: normal; color: #10b981;">%</span></div>
+                                         </div>
+                                         <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                             <div class="telemetry-label">Pass 2 Permeate Flow</div>
+                                             <div class="telemetry-val" style="font-size: 1.4rem; color: #10b981;"><span id="calc-2p-p2-flow-summary">-</span> <span id="calc-2p-p2-flow-summary-unit" style="font-size: 0.75rem; font-weight: normal; color: #10b981;">m³/h</span></div>
+                                         </div>
+                                         <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                             <div class="telemetry-label">Pass 2 Feed Pressure</div>
+                                             <div class="telemetry-val" style="font-size: 1.4rem; color: #10b981;"><span id="calc-2p-p2-press-summary">-</span> <span id="calc-2p-p2-press-summary-unit" style="font-size: 0.75rem; font-weight: normal; color: #10b981;">bar</span></div>
+                                         </div>
+                                         <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                             <div class="telemetry-label">Pass 2 Permeate TDS</div>
+                                             <div class="telemetry-val" style="font-size: 1.4rem; color: #10b981;"><span id="calc-2p-p2-tds-summary">-</span> <span style="font-size: 0.75rem; font-weight: normal; color: #10b981;">mg/L</span></div>
+                                         </div>
+                                         <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                             <div class="telemetry-label">Pass 2 Specific Energy</div>
+                                             <div class="telemetry-val" style="font-size: 1.4rem; color: #10b981;"><span id="calc-2p-p2-sec">-</span> <span style="font-size: 0.75rem; font-weight: normal; color: #10b981;">kWh/m³</span></div>
+                                         </div>
+                                         <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem; display: flex; flex-direction: column; justify-content: center;">
+                                             <div class="telemetry-label" style="margin-bottom: 0.15rem; color: #6ee7b7;">Interstage Conditioning</div>
+                                             <div class="telemetry-val" style="font-size: 0.85rem; font-weight: 600; line-height: 1.2; color: #10b981;"><span id="calc-2p-cond-desc">None</span></div>
+                                         </div>
+                                         <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem; display: flex; flex-direction: column; justify-content: center;">
+                                             <div class="telemetry-label" style="margin-bottom: 0.15rem; color: #6ee7b7;">Interpass Pump Power</div>
+                                             <div class="telemetry-val" style="font-size: 1.4rem; color: #10b981;"><span id="calc-2p-p2-pump">-</span> <span style="font-size: 0.75rem; font-weight: normal; color: #10b981;">kW</span></div>
+                                         </div>
+                                     </div>
+                                 </section>
+                             </div>
+
+                            <!-- Recycle Summary -->
+                            <section class="card" id="calc-recycle-summary-card" style="display: none;">
+                                <div class="card-header">
+                                    <h2 class="card-title">RO/NF SYSTEM SUMMARY (RECYCLE)</h2>
+                                </div>
+                                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1rem;">
+                                    <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem; background: linear-gradient(135deg, #0d9488, #0f766e); border-color: rgba(255, 255, 255, 0.15); box-shadow: 0 4px 10px rgba(13, 148, 136, 0.15);">
+                                        <div class="telemetry-label" style="color: #ccfbf1;">Effective Recovery</div>
+                                        <div class="telemetry-val" style="font-size: 1.4rem; color: #ffffff;"><span id="calc-rec-eff-rec">-</span> <span style="font-size: 0.75rem; font-weight: normal; color: #ccfbf1 !important;">%</span></div>
+                                    </div>
+                                    <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                        <div class="telemetry-label">Feed Pressure</div>
+                                        <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-rec-press">-</span> <span id="calc-rec-press-unit" style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">bar</span></div>
+                                    </div>
+                                    <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                        <div class="telemetry-label">Permeate TDS</div>
+                                        <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-rec-perm-tds">-</span> <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">mg/L</span></div>
+                                    </div>
+                                    <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                        <div class="telemetry-label">Blended TDS</div>
+                                        <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-rec-blend-tds">-</span> <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">mg/L</span></div>
+                                    </div>
+                                    <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                        <div class="telemetry-label">Recycle Flow</div>
+                                        <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-rec-flow">-</span> <span id="calc-rec-flow-unit" style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">m³/h</span></div>
+                                    </div>
+                                    <div class="telemetry-card" style="min-height: 80px; padding: 0.8rem 0.5rem;">
+                                        <div class="telemetry-label">Blended Feed Flow</div>
+                                        <div class="telemetry-val" style="font-size: 1.4rem;"><span id="calc-rec-blend-flow">-</span> <span id="calc-rec-blend-flow-unit" style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">m³/h</span></div>
+                                    </div>
+                                </div>
+                                <div id="calc-rec-warning" style="display: none; background: rgba(231, 76, 60, 0.1); color: #c0392b; padding: 0.8rem; margin-top: 1rem; border-radius: 6px; font-size: 0.9rem; font-weight: 500;">
+                                    <i class="fa-solid fa-triangle-exclamation"></i> <span id="calc-rec-warning-text"></span>
+                                </div>
+                            </section>
+
+
+                            <!-- Interstage Booster Pumps -->
+                            <section class="card" id="calc-booster-pumps-card" style="display: none;">
+                                <div class="card-header">
+                                    <h2 class="card-title">Interstage Booster Pumps</h2>
+                                </div>
+                                <div class="card-content" style="padding: 0;">
+                                    <table class="report-table" style="width: 100%; border-collapse: collapse;">
+                                        <thead>
+                                            <tr>
+                                                <th style="text-align: left; padding: 0.5rem;">Location</th>
+                                                <th style="text-align: center; padding: 0.5rem;">Flow <span id="calc-bp-flow-unit">(m³/h)</span></th>
+                                                <th style="text-align: center; padding: 0.5rem;">Inlet Press. <span id="calc-bp-inlet-press-unit">(bar)</span></th>
+                                                <th style="text-align: center; padding: 0.5rem;">Boost ΔP <span id="calc-bp-dp-unit">(bar)</span></th>
+                                                <th style="text-align: center; padding: 0.5rem;">Power (kW)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="calc-booster-pumps-tbody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </section>
+
+                            <!-- Design Warnings -->
+                            <section class="card" id="calc-warnings-card" style="display: none; flex-direction: column;">
+                                <div class="card-header">
+                                    <h2 class="card-title">Design Warnings</h2>
+                                </div>
+                                <div class="card-content" style="padding: 0; overflow-y: auto; max-height: 250px;">
+                                    <table class="report-table" style="width: 100%; border-collapse: collapse;">
+                                        <thead>
+                                            <tr>
+                                                <th style="text-align: left; padding: 0.5rem;">Warning</th>
+                                                <th style="text-align: center; padding: 0.5rem;">Limit</th>
+                                                <th style="text-align: center; padding: 0.5rem;">Estimate</th>
+                                                <th style="text-align: center; padding: 0.5rem;">Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="calc-warnings-tbody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </section>
+                        </div>
+
+                        <!-- SUBTAB: Membrane Recommendation -->
+                        <div id="calc-content-membrane" style="display: none; flex-direction: column; gap: 0.5rem; width: 100%;">
+                            
+                 <!-- Top Row: Best Recommendation and Score -->
+                 <div style="display: grid; grid-template-columns: 1.5fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; grid-column: span 2;">
+                     <!-- Best Recommendation Display -->
+                     <section class="card" style="display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 1.2rem; background: linear-gradient(135deg, #1e40af, #3b82f6); border: 1px solid rgba(255, 255, 255, 0.15); box-shadow: 0 4px 20px rgba(30, 64, 175, 0.35);">
+                          <h3 style="margin: 0; color: #bfdbfe; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700;">Recommended Permionics</h3>
+                          <div id="membrane-best-model" style="font-size: 2.0rem; font-weight: 900; color: #ffffff; margin: 0.4rem 0; font-family: 'Inter', sans-serif; text-shadow: 0 0 20px rgba(255, 255, 255, 0.6);">--</div>
+                          <div id="membrane-best-desc" style="font-size: 0.85rem; color: #ffffff; font-weight: 500; text-align: center; max-width: 90%;">Select conditions and run recommender.</div>
+                          <div id="membrane-best-type-badge" style="margin-top: 0.6rem; font-size: 0.78rem; color: #bfdbfe; font-weight: 600; padding: 0.2rem 0.8rem; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 20px;"><i class="fa-solid fa-layer-group"></i> Type: --</div>
+                          <button id="apply-rec-btn" style="display: none; margin-top: 1rem; padding: 0.5rem 1.2rem; font-size: 0.85rem; background: #10b981; color: white; border: none; border-radius: 4px; font-weight: 600; cursor: pointer; transition: background 0.3s;" onmouseover="this.style.background='#059669'" onmouseout="this.style.background='#10b981'" onclick="applyBestRecommendation()"><i class="fa-solid fa-check"></i> Apply to Calculation</button>
+                      </section>
+
+                      <!-- Match Score Card -->
+                      <section class="card" style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 1rem; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+                          <h3 style="margin-top: 0; margin-bottom: 0.5rem; color: var(--text-secondary); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700;">Recommender Score</h3>
+                          <div style="position: relative; width: 90px; height: 90px; border-radius: 50%; background: conic-gradient(var(--success-color) 0%, rgba(0, 0, 0, 0.1) 0%); display: flex; align-items: center; justify-content: center; transition: background 0.5s ease;" id="membrane-score-ring">
+                              <div style="width: 72px; height: 72px; background: var(--card-bg); border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: inset 0 4px 8px rgba(0,0,0,0.4);">
+                                  <span id="membrane-best-score" style="font-size: 1.7rem; font-weight: 800; color: var(--text-primary); font-family: 'Inter', sans-serif;">--</span>
+                                  <span style="font-size: 0.58rem; color: var(--text-secondary); font-weight: 700; letter-spacing: 0.05em; margin-top: -2px;">MATCH %</span>
+                              </div>
+                          </div>
+                          <div id="membrane-match-status" style="margin-top: 0.7rem; font-size: 0.75rem; font-weight: 700; padding: 0.15rem 0.8rem; border-radius: 20px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); background: rgba(0, 0, 0, 0.05);">--</div>
+                      </section>
+                  </div>
+
+                  <!-- Ranked Membrane Options -->
+                  <section class="card" style="box-shadow: 0 4px 20px rgba(0,0,0,0.15); grid-column: span 2; display: flex; flex-direction: column;">
+                      <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
+                          <h2 class="card-title">Ranked Candidate Membranes</h2>
+                      </div>
+                      <div style="margin-top: 1.2rem; display: flex; flex-direction: column; gap: 1rem;" id="membrane-candidates-list">
+                          <div style="text-align: center; color: var(--text-secondary); padding: 3rem 0;">
+                              <i class="fa-solid fa-sliders" style="font-size: 2.5rem; margin-bottom: 0.8rem; opacity: 0.3; color: var(--accent-color);"></i><br>
+                              Configure parameters in feed tab and run the recommender to view options.
+                          </div>
+                      </div>
+                  </section>
+              
+                        </div>
+
+
+                        <!-- SUBTAB: Hydraulic Profile -->
+                        <div id="calc-content-hydraulic" style="display: none; width: 100%;">
+                            <!-- Stage-wise Performance Summary Card -->
+                            <section class="card" style="margin-bottom: 1rem;">
+                                <div class="card-header">
+                                    <h2 class="card-title">Stage-wise Performance Summary</h2>
+                                </div>
+                                <div class="card-content" style="overflow-x: auto; padding: 0;">
+                                    <table class="report-table" style="width: 100%; border-collapse: collapse;">
+                                        <thead>
+                                            <tr>
+                                                <th style="text-align: left; padding: 0.5rem 0.6rem;">Stage</th>
+                                                <th>Feed Flow<br><span id="calc-stage-feed-flow-unit">(m³/h)</span></th>
+                                                <th>Perm Flow<br><span id="calc-stage-perm-flow-unit">(m³/h)</span></th>
+                                                <th>Conc Flow<br><span id="calc-stage-conc-flow-unit">(m³/h)</span></th>
+                                                <th>Recovery<br>(%)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="calc-stage-tbody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </section>
+
+                            <section class="card">
+                                <div class="card-header">
+                                    <h2 class="card-title">Element-wise Hydraulic Performance</h2>
+                                </div>
+                                <div class="card-content" style="overflow-x: auto; padding: 0;">
+                                    <table class="report-table calc-element-table" style="width: 100%; border-collapse: collapse; white-space: nowrap;">
+                                        <thead>
+                                            <tr>
+                                                <th>Element</th>
+                                                <th>Feed Flow<br><span id="calc-hyd-feed-flow-unit">(m³/h)</span></th>
+                                                <th>Perm Flow<br><span id="calc-hyd-perm-flow-unit">(m³/h)</span></th>
+                                                <th>Conc Flow<br><span id="calc-hyd-conc-flow-unit">(m³/h)</span></th>
+                                                <th>Feed Press<br><span id="calc-hyd-feed-press-unit">(bar)</span></th>
+                                                <th>ΔP<br><span id="calc-hyd-deltap-unit">(bar)</span></th>
+                                                <th>Flux<br><span id="calc-hyd-flux-unit">(LMH)</span></th>
+                                                <th>Recovery<br>(%)</th>
+                                                <th>CP (β)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="calc-hyd-tbody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </section>
+                        </div>
+
+                        <!-- SUBTAB: Ion Profile -->
+                        <div id="calc-content-ion" style="display: none; width: 100%;">
+                            <section class="card">
+                                <div class="card-header">
+                                    <h2 class="card-title">System Ion Rejection Profile</h2>
+                                </div>
+                                <div class="card-content" style="overflow-x: auto; padding: 0;">
+                                    <table class="report-table calc-element-table" style="width: 100%; border-collapse: collapse;">
+                                        <thead>
+                                            <tr>
+                                                <th style="text-align: left;">Ion</th>
+                                                <th>Feed<br>(mg/L)</th>
+                                                <th>Permeate<br>(mg/L)</th>
+                                                <th>Reject<br>(mg/L)</th>
+                                                <th>Rejection<br>(%)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="calc-ion-tbody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </section>
+
+                            <!-- PHREEQC Concentrate Scaling Risks -->
+                            <section class="card" id="calc-si-card" style="display:none; margin-top: 1rem;">
+                                <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                                    <h2 class="card-title"><i class="fa-solid fa-flask-vial" style="color:var(--primary-color); margin-right:0.5rem;"></i>Concentrate Scaling Risks (PHREEQC)</h2>
+
+                                </div>
+                                <div class="card-content" style="overflow-x:auto; padding:0;">
+                                    <table class="report-table calc-element-table" style="width:100%; border-collapse:collapse;">
+                                        <thead>
+                                            <tr>
+                                                <th style="text-align:left;">Mineral</th>
+                                                <th>Formula</th>
+                                                <th>SI (Conc.)</th>
+                                                <th>Risk Level</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="calc-si-tbody">
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                            </section>
+                        </div>
+
+                        <!-- SUBTAB: Economics -->
+                        <div id="calc-content-economics" style="display: none; flex-direction: column; gap: 0.5rem; width: 100%;">
+                            <!-- Input Parameters -->
+                            <section class="card">
+                                <div class="card-header">
+                                    <h2 class="card-title">Economic Parameters</h2>
+                                </div>
+                                <div class="card-content" style="display: flex; flex-direction: column; gap: 0.8rem;">
+                                    <!-- Row 1: RO Parameters (always shown) -->
+                                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.8rem;">
+                                        <div class="input-group">
+                                            <label for="eco-tariff">Electricity Tariff <span class="unit">₹/kWh</span></label>
+                                            <input type="number" id="eco-tariff" value="7.50" step="0.1">
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="eco-mem-cost">RO Membrane Cost <span class="unit">₹/elem</span></label>
+                                            <input type="number" id="eco-mem-cost" value="26880" step="any">
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="eco-ves-cost">RO Vessel Cost <span class="unit">₹/vessel</span></label>
+                                            <input type="number" id="eco-ves-cost" value="48000" step="1000">
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="eco-pump-cost">Pump Cost <span class="unit">₹/kW</span></label>
+                                            <input type="number" id="eco-pump-cost" value="96000" step="1000">
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="eco-ic-factor">I&amp;C Factor <span class="unit">%</span></label>
+                                            <input type="number" id="eco-ic-factor" value="15" step="1" max="100">
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="eco-cont-factor">Contingency <span class="unit">%</span></label>
+                                            <input type="number" id="eco-cont-factor" value="10" step="1" max="100">
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="eco-mem-life">RO Membrane Life <span class="unit">years</span></label>
+                                            <input type="number" id="eco-mem-life" value="5" step="1">
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="eco-avail">Availability <span class="unit">%</span></label>
+                                            <input type="number" id="eco-avail" value="90" step="1" max="100">
+                                        </div>
+                                    </div>
+                                    <!-- Row 2: UF Parameters (shown only when UF train selected) -->
+                                    <div id="eco-uf-params-row" style="display: none; grid-template-columns: repeat(4, 1fr); gap: 0.8rem; padding-top: 0.6rem; border-top: 1px dashed rgba(99,102,241,0.3);">
+                                        <div class="input-group">
+                                            <label for="eco-uf-mod-cost">UF Module Cost <span class="unit">₹/module</span></label>
+                                            <input type="number" id="eco-uf-mod-cost" value="120000" step="1000">
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="eco-uf-mem-life">UF Module Life <span class="unit">years</span></label>
+                                            <input type="number" id="eco-uf-mem-life" value="7" step="1">
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;">
+                                <!-- CAPEX -->
+                                <section class="card">
+                                    <div class="card-header">
+                                        <h2 class="card-title">CAPEX Breakdown</h2>
+                                    </div>
+                                    <div class="card-content" style="padding: 0;">
+                                        <table class="report-table" style="width: 100%; border-collapse: collapse;">
+                                            <tbody id="eco-capex-tbody">
+                                                <tr><td>Membranes</td><td id="eco-capex-mem" style="text-align: right;">-</td></tr>
+                                                <tr><td>Pressure Vessels</td><td id="eco-capex-ves" style="text-align: right;">-</td></tr>
+                                                <tr><td>HP Pump</td><td id="eco-capex-hp" style="text-align: right;">-</td></tr>
+                                                <tr><td>Booster Pumps</td><td id="eco-capex-bp" style="text-align: right;">-</td></tr>
+                                                <tr id="eco-capex-uf-mod-row" style="display:none;"><td>UF Membrane Modules</td><td id="eco-capex-uf-mod" style="text-align: right;">-</td></tr>
+                                                <tr id="eco-capex-uf-pump-row" style="display:none;"><td>UF Feed &amp; BW Pumps</td><td id="eco-capex-uf-pump" style="text-align: right;">-</td></tr>
+                                                <tr style="border-top: 1px dashed rgba(0, 0, 0, 0.2);">
+                                                    <td><strong>Equip. Subtotal</strong></td><td id="eco-capex-sub" style="text-align: right;"><strong>-</strong></td>
+                                                </tr>
+                                                <tr><td>I&C</td><td id="eco-capex-ic" style="text-align: right;">-</td></tr>
+                                                <tr><td>Contingency</td><td id="eco-capex-cont" style="text-align: right;">-</td></tr>
+                                            </tbody>
+                                        </table>
+                                        <div style="padding: 1rem; border-top: 1px solid rgba(0, 0, 0, 0.1); display: flex; justify-content: space-between; align-items: center; background: rgba(56, 189, 248, 0.05);">
+                                            <span style="font-size: 1rem; color: #94a3b8;">Total CAPEX</span>
+                                            <span id="eco-capex-total" style="font-size: 1.25rem; font-weight: 700; color: #38bdf8;">-</span>
+                                        </div>
+                                    </div>
+                                </section>
+
+                                <!-- OPEX -->
+                                <section class="card" style="display: flex; flex-direction: column;">
+                                    <div class="card-header">
+                                        <h2 class="card-title">OPEX (Annual)</h2>
+                                    </div>
+                                    <div class="card-content" style="padding: 0; flex: 1;">
+                                        <table class="report-table" style="width: 100%; border-collapse: collapse;">
+                                            <tbody id="eco-opex-tbody">
+                                                <tr><td>Energy Cost</td><td id="eco-opex-energy" style="text-align: right;">-</td></tr>
+                                                <tr><td>RO Membrane Replacement</td><td id="eco-opex-mem" style="text-align: right;">-</td></tr>
+                                                <tr id="eco-opex-uf-mem-row" style="display:none;"><td>UF Module Replacement</td><td id="eco-opex-uf-mem" style="text-align: right;">-</td></tr>
+                                                <tr id="eco-opex-uf-chem-row" style="display:none;"><td>UF CEB Chemicals</td><td id="eco-opex-uf-chem" style="text-align: right;">-</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div style="padding: 1rem; border-top: 1px solid rgba(0, 0, 0, 0.1); display: flex; justify-content: space-between; align-items: center; background: rgba(167, 139, 250, 0.05);">
+                                        <span style="font-size: 1rem; color: #94a3b8;">Total OPEX</span>
+                                        <span id="eco-opex-total" style="font-size: 1.25rem; font-weight: 700; color: #a78bfa;">-</span>
+                                    </div>
+                                </section>
+
+                                <!-- Unit Cost -->
+                                <section class="card" style="display: flex; flex-direction: column;">
+                                    <div class="card-header">
+                                        <h2 class="card-title">Unit Cost</h2>
+                                    </div>
+                                    <div class="card-content" style="display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 1rem; flex: 1;">
+                                        <div style="text-align: center;">
+                                            <div style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 0.25rem;">Annual Production (KL)</div>
+                                            <div id="eco-metrics-kl" style="font-size: 1.1rem; color: var(--text-primary); font-weight: 600;">-</div>
+                                        </div>
+                                        <div style="text-align: center;">
+                                            <div style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 0.25rem;">Total Annualised Cost</div>
+                                            <div id="eco-metrics-tac" style="font-size: 1.1rem; color: var(--text-primary); font-weight: 600;">-</div>
+                                        </div>
+                                    </div>
+                                    <div style="padding: 1rem; border-top: 1px solid rgba(0, 0, 0, 0.1); display: flex; justify-content: space-between; align-items: center; background: rgba(52, 211, 153, 0.05);">
+                                        <span style="font-size: 1rem; color: #94a3b8;">Cost per KL</span>
+                                        <span id="eco-metrics-cost-kl" style="font-size: 1.5rem; font-weight: 700; color: #34d399;">-</span>
+                                    </div>
+                                </section>
+                            </div>
+                        </div>
+
+                        <!-- SUBTAB: Process Flow Diagram -->
+                        <div id="calc-content-pfd" style="display: none; flex-direction: column; gap: 0.5rem; width: 100%;">
+                            <section class="card">
+                                <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                                    <h2 class="card-title">Process Flow Diagram</h2>
+                                    <button class="btn" style="padding: 0.4rem 1rem; background: var(--success-color); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem;" onclick="exportPFDSVG()">↓ Export SVG</button>
+                                </div>
+                                <div class="card-content" style="padding: 1rem; background: var(--bg-color); overflow-x: auto;">
+                                    <div id="pfd-svg-container" style="background: var(--card-bg); border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.09); margin: 0 auto; width: max-content;"></div>
+                                </div>
+                            </section>
+                            </div>
+
+                        <!-- SUBTAB: Physics Projection -->
+                        <div id="calc-content-physics" style="display: none; flex-direction: column; gap: 0.5rem; width: 100%;">
+
+                            <!-- Year Banner -->
+                            <div id="phys-year-banner" style="background: linear-gradient(135deg, #6366f1, #8b5cf6); border-radius: 10px; padding: 0.8rem 1.4rem; display: flex; align-items: center; justify-content: space-between;">
+                                <div>
+                                    <div style="font-size: 1.5rem; font-weight: 800; color: white;" id="phys-banner-title">Year 0 — Baseline</div>
+                                </div>
+                            </div>
+
+                            <!-- Comparison Cards: Year 0 vs Year N -->
+                            <section class="card">
+                                <div class="card-header">
+                                    <h2 class="card-title">Performance — <span id="phys-card-year-label">Year 0 (Baseline)</span></h2>
+                                </div>
+                                <div class="card-content" style="padding: 1rem;">
+                                    <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem;">
+                                        <div class="telemetry-card" style="min-height: 90px; padding: 0.8rem 0.5rem; border: 1.5px solid rgba(99,102,241,0.3);">
+                                            <div class="telemetry-label">Feed Pressure</div>
+                                            <div class="telemetry-val" style="font-size: 1.3rem;"><span id="phys-card-press">-</span> <span style="font-size: 0.7rem; color: var(--text-secondary);">bar</span></div>
+                                            <div id="phys-card-press-delta" style="font-size: 0.72rem; margin-top: 0.2rem; font-weight: 600; color: #f87171;"></div>
+                                        </div>
+                                        <div class="telemetry-card" style="min-height: 90px; padding: 0.8rem 0.5rem; border: 1.5px solid rgba(99,102,241,0.3);">
+                                            <div class="telemetry-label">Permeate Flow</div>
+                                            <div class="telemetry-val" style="font-size: 1.3rem;"><span id="phys-card-flow">-</span> <span style="font-size: 0.7rem; color: var(--text-secondary);">m³/h</span></div>
+                                            <div id="phys-card-flow-delta" style="font-size: 0.72rem; margin-top: 0.2rem; font-weight: 600; color: #34d399;"></div>
+                                        </div>
+                                        <div class="telemetry-card" style="min-height: 90px; padding: 0.8rem 0.5rem; border: 1.5px solid rgba(99,102,241,0.3);">
+                                            <div class="telemetry-label">NPF</div>
+                                            <div class="telemetry-val" style="font-size: 1.3rem;"><span id="phys-card-npf">-</span></div>
+                                            <div id="phys-card-npf-delta" style="font-size: 0.72rem; margin-top: 0.2rem; font-weight: 600; color: #f87171;"></div>
+                                        </div>
+                                        <div class="telemetry-card" style="min-height: 90px; padding: 0.8rem 0.5rem; border: 1.5px solid rgba(99,102,241,0.3);">
+                                            <div class="telemetry-label">FRI</div>
+                                            <div class="telemetry-val" style="font-size: 1.3rem;"><span id="phys-card-fri">-</span></div>
+                                            <div id="phys-card-fri-label" style="font-size: 0.72rem; margin-top: 0.2rem; color: var(--text-secondary);">Fouling Resistance Index</div>
+                                        </div>
+                                        <div class="telemetry-card" style="min-height: 90px; padding: 0.8rem 0.5rem; border: 1.5px solid rgba(99,102,241,0.3);">
+                                            <div class="telemetry-label">B Relative</div>
+                                            <div class="telemetry-val" style="font-size: 1.3rem;"><span id="phys-card-brel">-</span></div>
+                                            <div id="phys-card-brel-label" style="font-size: 0.72rem; margin-top: 0.2rem; color: var(--text-secondary);">Salt Perm. Degradation</div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Additional metrics row -->
+                                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-top: 0.8rem; padding-top: 0.8rem; border-top: 1px solid var(--card-border);">
+                                        <div style="text-align: center;">
+                                            <div style="font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted);">Recovery</div>
+                                            <div style="font-size: 1.1rem; font-weight: 700;"><span id="phys-card-rec">-</span>%</div>
+                                        </div>
+                                        <div style="text-align: center;">
+                                            <div style="font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted);">Permeate TDS</div>
+                                            <div style="font-size: 1.1rem; font-weight: 700;"><span id="phys-card-tds">-</span> <span style="font-size: 0.75rem; font-weight: normal;">mg/L</span></div>
+                                        </div>
+                                        <div style="text-align: center;">
+                                            <div style="font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted);">SEC</div>
+                                            <div style="font-size: 1.1rem; font-weight: 700;"><span id="phys-card-sec">-</span> <span style="font-size: 0.75rem; font-weight: normal;">kWh/m³</span></div>
+                                        </div>
+                                        <div style="text-align: center;">
+                                            <div style="font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted);">CIP Events</div>
+                                            <div style="font-size: 1.1rem; font-weight: 700; color: #f59e0b;"><span id="phys-card-cips">-</span></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <!-- Year-by-Year Table -->
+                            <section class="card">
+                                <div class="card-header">
+                                    <h2 class="card-title">Year-by-Year Performance Table</h2>
+                                </div>
+                                <div class="card-content" style="overflow-x: auto; padding: 0;">
+                                    <table class="report-table" style="width: 100%; border-collapse: collapse; white-space: nowrap;">
+                                        <thead>
+                                            <tr>
+                                                <th style="min-width: 55px;">Year</th>
+                                                <th>Qp (m³/h)</th>
+                                                <th>Rec. (%)</th>
+                                                <th>P_feed (bar)</th>
+                                                <th>TMP (bar)</th>
+                                                <th>TDS (mg/L)</th>
+                                                <th>SEC (kWh/m³)</th>
+                                                <th>NPF</th>
+                                                <th>NSP</th>
+                                                <th>FRI</th>
+                                                <th>B_rel</th>
+                                                <th title="Ratio of current Net Driving Pressure compared to clean baseline (NDP_y / NDP_0)">NDP Ratio</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="phys-annual-tbody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </section>
+
+                            <!-- Charts Row -->
+                            <div style="display: grid; grid-template-columns: 1fr; gap: 1rem;">
+                                <!-- NPF/NSP Trend -->
+                                <section class="card">
+                                    <div class="card-header">
+                                        <h2 class="card-title">NPF & NSP Trend</h2>
+                                    </div>
+                                    <div style="padding: 0.5rem;">
+                                        <canvas id="phys-npf-chart" height="180"></canvas>
+                                    </div>
+                                </section>
+                            </div>
+
+                            <!-- Feed Pressure & SEC Trend -->
+                            <section class="card">
+                                <div class="card-header">
+                                    <h2 class="card-title">Feed Pressure & SEC Trend</h2>
+                                </div>
+                                <div style="padding: 0.5rem;">
+                                    <canvas id="phys-pressure-chart" height="130"></canvas>
+                                </div>
+                            </section>
+
+                            <!-- Fouling Resistance Breakdown at Selected Year -->
+                            <section class="card">
+                                <div class="card-header">
+                                    <h2 class="card-title">Fouling Resistance Breakdown — <span id="phys-fouling-year-label">Year 0</span></h2>
+                                </div>
+                                <div class="card-content" style="padding: 0;">
+                                    <table class="report-table" style="width: 100%; border-collapse: collapse;">
+                                        <thead>
+                                            <tr>
+                                                <th style="text-align: left; padding: 0.5rem;">Mechanism</th>
+                                                <th>Resistance (m<sup>-1</sup>)</th>
+                                                <th>Contribution (%)</th>
+                                                <th>Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="phys-fouling-tbody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </section>
+
+                            <!-- Wall-SI vs Bulk-SI Comparison -->
+                            <section class="card">
+                                <div class="card-header">
+                                    <h2 class="card-title">Wall-Level Saturation Indices — <span id="phys-si-year-label">Year 0</span></h2>
+                                </div>
+                                <div class="card-content" style="padding: 0;">
+                                    <table class="report-table" style="width: 100%; border-collapse: collapse;">
+                                        <thead>
+                                            <tr>
+                                                <th style="text-align: left; padding: 0.5rem;">Mineral</th>
+                                                <th>Bulk SI</th>
+                                                <th>Wall SI (Yr 0)</th>
+                                                <th>Wall SI (Selected Yr)</th>
+                                                <th>Limit</th>
+                                                <th>Risk</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="phys-si-tbody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </section>
+
+                        </div>
+
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <div id="report-panel-view" style="display: none; flex-direction: column; flex: 1;">
+            <main style="display: flex; flex-direction: column; flex: 1;">
+                <section class="card" style="margin: 16px; margin-bottom: 8px;">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <h2 class="card-title"><i class="fa-solid fa-file-lines" style="color: rgba(255,255,255,0.8);"></i> COMPREHENSIVE PROJECT SUMMARY REPORT</h2>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn-secondary" id="wave-report-generate-btn" style="background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.4); color: #ffffff; font-size: 11px;">
+                                <i class="fa-solid fa-gears"></i> Generate Preview
+                            </button>
+                            <button class="btn-secondary" id="wave-report-download-btn" style="background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.4); color: #ffffff; font-size: 11px; display: none;">
+                                <i class="fa-solid fa-download"></i> Download PDF
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="report-content" id="printable-report-area" style="padding: 0; background: #ffffff; border-radius: 4px; border: 1px solid #e0e0e0; height: 800px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; margin-top: 1rem;">
+                        <div id="report-preview-placeholder" style="color: #64748b;">
+                            <i class="fa-solid fa-file-pdf" style="font-size: 3rem; margin-bottom: 1rem; color: #cbd5e1;"></i>
+                            <p style="font-size: 1.1rem; font-weight: 500;">No Report Generated Yet</p>
+                            <p style="font-size: 0.9rem; margin-top: 0.5rem;">Please run a system calculation first, then the exact PDF report preview will appear here.</p>
+                        </div>
+                        <iframe id="pdf-preview-iframe" style="width: 100%; height: 100%; border: none; display: none;"></iframe>
+                    </div>
+                </section>
+            </main>
+        </div>
+
+        <div id="feed-dashboard-view" style="display: none; padding: 1rem; flex-direction: column; gap: 0.5rem; flex: 1;">
+            <div style="display: grid; grid-template-columns: 3fr 1fr; gap: 1rem; align-items: start; flex: 1;">
+                <main class="data-entry" style="display: grid !important; grid-template-columns: 1fr 1fr; gap: 1rem; flex-direction: unset; align-items: stretch;">
+                <!-- Physical Parameters -->
+                <section class="card" style="height: 100%;">
+                    <div class="card-header">
+                        <h2 class="card-title">Physical Parameters</h2>
+                    </div>
+                    <div class="input-grid" style="grid-template-columns: 1fr 1fr; align-content: start;">
+                        <div class="input-group">
+                            <label for="water-type">Feed Water Type</label>
+                            <select id="water-type" class="water-type-select">
+                                <option value="" disabled>Select Type</option>
+                                <option value="75.0" data-source-type="WELL_WATER" selected>Well Water</option>
+                                <option value="80.0" data-source-type="LOW_TDS">Low TDS Water</option>
+                                <option value="75.0" data-source-type="BRACKISH_GW">Brackish Groundwater</option>
+                                <option value="75.0" data-source-type="SURFACE">Surface Water (SDI &lt; 5)</option>
+                                <option value="80.0" data-source-type="SURFACE_SDI3">Surface Water (SDI &lt; 3)</option>
+                                <option value="40.0" data-source-type="SEAWATER">Seawater (Open Intake)</option>
+                                <option value="45.0" data-source-type="SEAWATER_BEACH">Seawater (Beach Well)</option>
+                                <option value="70.0" data-source-type="WASTEWATER">Wastewater (Conventional)</option>
+                                <option value="75.0" data-source-type="WASTEWATER_UF">Wastewater (UF Pretreated)</option>
+                                <option value="90.0" data-source-type="RO_PERMEATE">RO Permeate / 2nd Pass</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label for="flow">Feed Flow Rate <span class="unit" id="flow-unit-label">m³/h</span></label>
+                            <input type="number" id="flow" step="0.1" value="50.0">
+                        </div>
+                        <div class="input-group">
+                            <label for="ph">pH</label>
+                            <input type="number" id="ph" step="0.1" value="7.2" min="0.1" max="14">
+                            <div class="validation-message" id="msg-ph"></div>
+                        </div>
+                        <div class="input-group">
+                            <label for="temp">Temperature <span class="unit" id="temp-unit-label">°C</span></label>
+                            <input type="number" id="temp" step="0.1" value="25.0">
+                            <div class="validation-message" id="msg-temp"></div>
+                        </div>
+                        <div class="input-group">
+                            <label for="recovery">Recovery Target <span class="unit">%</span></label>
+                            <input type="number" id="recovery" step="0.1" value="75.0">
+                            <div class="validation-message" id="msg-recovery"></div>
+                        </div>
+                        <div class="input-group">
+                            <label for="application-type">Application Type</label>
+                            <select id="application-type" class="water-type-select">
+                                <option value="DRINKING" selected>Drinking / Potable</option>
+                                <option value="INDUSTRIAL">Industrial General</option>
+                                <option value="BOILER_FEED">Boiler Feed</option>
+                                <option value="IRRIGATION">Irrigation / Agriculture</option>
+                                <option value="UPW">Ultrapure Water (UPW)</option>
+                                <option value="PHARMA">Pharmaceutical</option>
+                                <option value="ZLD">Zero Liquid Discharge (ZLD)</option>
+                            </select>
+                        </div>
+                    </div>
+                </section>
+
+
+
+                <!-- Fouling & Pre-Treatment -->
+                <section class="card" style="height: 100%;">
+                    <div class="card-header">
+                        <h2 class="card-title">Fouling Indicators</h2>
+                    </div>
+                    <div class="input-grid">
+                        <div class="input-group"><label>Turbidity (NTU)</label><input type="number" id="turbidity" step="0.1" value="0.2"></div>
+                        <div class="input-group"><label><span>SDI<sub>15</sub></span></label><input type="number" id="sdi" step="0.1" value="1.8"></div>
+                        <div class="input-group"><label><span>Free Cl<sub>2</sub></span> <span class="unit">(mg/L)</span></label><input type="number" id="cl2" step="0.01" value="0.02"><div class="validation-message" id="msg-cl2"></div></div>
+                        <div class="input-group"><label>TOC (mg/L)</label><input type="number" id="toc" step="0.1" value=""></div>
+                        <div class="input-group"><label>Iron (mg/L)</label><input type="number" id="fe" step="0.01" value="0.05"></div>
+                        <div class="input-group"><label>Manganese (mg/L)</label><input type="number" id="mn" step="0.01" value="0.02"></div>
+                        <div class="input-group"><label>Aluminium (mg/L)</label><input type="number" id="al" step="0.01" value="0.03"></div>
+                        <div class="input-group"><label>Oil & Grease (mg/L)</label><input type="number" id="oil-grease" step="0.1" value=""></div>
+                        <div class="input-group"><label>BOD (mg/L)</label><input type="number" id="bod" step="1" value=""></div>
+                        <div class="input-group"><label>COD (mg/L)</label><input type="number" id="cod" step="1" value=""></div>
+                    </div>
+                </section>
+
+                <!-- Ionic Data Combined Table -->
+                <section class="card" style="grid-column: span 2;">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <h2 class="card-title">Ionic Data</h2>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <button class="btn" style="background: rgba(99, 102, 241, 0.2); border: 1px solid rgba(99, 102, 241, 0.4); color: var(--text-primary); padding: 0.25rem 0.6rem; font-size: 0.75rem;" onclick="importWaterAnalysis()">Import Analysis</button>
+                            <button class="btn" style="background: rgba(45, 212, 191, 0.2); border: 1px solid rgba(45, 212, 191, 0.4); color: var(--text-primary); padding: 0.25rem 0.6rem; font-size: 0.75rem;" onclick="runAutoBalance()">Auto Balance</button>
+                            <button class="btn" style="background: rgba(255, 60, 60, 0.2); border: 1px solid rgba(255, 60, 60, 0.4); color: var(--text-primary); padding: 0.25rem 0.6rem; font-size: 0.75rem;" onclick="clearIonicData()">Clear Data</button>
+                        </div>
+                    </div>
+                    <div style="padding: 1.5rem;">
+                        <div class="table-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                        <!-- Column 1 -->
+                        <div>
+                            <div style="font-weight: 700; color: #2563eb; font-size: 0.8rem; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.4rem; text-transform: uppercase;">
+                                <span style="display: inline-block; width: 8px; height: 8px; background-color: #2563eb; border-radius: 50%;"></span> Cations (+)
+                            </div>
+                            <table class="ion-table">
+                            <thead>
+                                <tr>
+                                    <th>ION SPECIES</th>
+                                    <th>MG/L</th>
+                                    <th>MEQ/L</th>
+                                    <th>PPM <span style="text-transform: none;">CaCO₃</span></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>Sodium (Na<sup>+</sup>)</td>
+                                    <td><input type="number" id="na" class="ion-input cation" data-mw="22.99" data-z="1" value="130.0" step="any"></td>
+                                    <td><span id="na-meq">—</span></td>
+                                    <td><span id="na-caco3">—</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Calcium (Ca<sup>2+</sup>)</td>
+                                    <td><input type="number" id="ca" class="ion-input cation" data-mw="40.08" data-z="2" value="85.0" step="any"></td>
+                                    <td><span id="ca-meq">—</span></td>
+                                    <td><span id="ca-caco3">—</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Magnesium (Mg<sup>2+</sup>)</td>
+                                    <td><input type="number" id="mg" class="ion-input cation" data-mw="24.31" data-z="2" value="28.0" step="any"></td>
+                                    <td><span id="mg-meq">—</span></td>
+                                    <td><span id="mg-caco3">—</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Potassium (K<sup>+</sup>)</td>
+                                    <td><input type="number" id="k" class="ion-input cation" data-mw="39.10" data-z="1" value="4.5" step="any"></td>
+                                    <td><span id="k-meq">—</span></td>
+                                    <td><span id="k-caco3">—</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Ammonium (NH<sub>4</sub><sup>+</sup>)</td>
+                                    <td><input type="number" id="nh4" class="ion-input cation" data-mw="18.04" data-z="1" value="0.2" step="any"></td>
+                                    <td><span id="nh4-meq">—</span></td>
+                                    <td><span id="nh4-caco3">—</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Barium (Ba<sup>2+</sup>)</td>
+                                    <td><input type="number" id="ba" class="ion-input cation" data-mw="137.33" data-z="2" value="0.05" step="any"></td>
+                                    <td><span id="ba-meq">—</span></td>
+                                    <td><span id="ba-caco3">—</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Strontium (Sr<sup>2+</sup>)</td>
+                                    <td><input type="number" id="sr" class="ion-input cation" data-mw="87.62" data-z="2" value="1.2" step="any"></td>
+                                    <td><span id="sr-meq">—</span></td>
+                                    <td><span id="sr-caco3">—</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Chloride (Cl<sup>-</sup>)</td>
+                                    <td><input type="number" id="cl" class="ion-input anion" data-mw="35.45" data-z="1" value="180.0" step="any"></td>
+                                    <td><span id="cl-meq">—</span></td>
+                                    <td><span id="cl-caco3">—</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        </div>
+
+                        <!-- Column 2 -->
+                        <div>
+                            <div style="font-weight: 700; color: #ea580c; font-size: 0.8rem; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.4rem; text-transform: uppercase;">
+                                <span style="display: inline-block; width: 8px; height: 8px; background-color: #ea580c; border-radius: 50%;"></span> Anions (-)
+                            </div>
+                            <table class="ion-table">
+                            <thead>
+                                <tr>
+                                    <th>ION SPECIES</th>
+                                    <th>MG/L</th>
+                                    <th>MEQ/L</th>
+                                    <th>PPM <span style="text-transform: none;">CaCO₃</span></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>Sulphate (SO<sub>4</sub><sup>2-</sup>)</td>
+                                    <td><input type="number" id="so4" class="ion-input anion" data-mw="96.06" data-z="2" value="110.0" step="any"></td>
+                                    <td><span id="so4-meq">—</span></td>
+                                    <td><span id="so4-caco3">—</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Bicarbonate (HCO<sub>3</sub><sup>-</sup>)</td>
+                                    <td><input type="number" id="hco3" class="ion-input anion" data-mw="61.02" data-z="1" value="180.0" step="any"></td>
+                                    <td><span id="hco3-meq">—</span></td>
+                                    <td><span id="hco3-caco3">—</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Carbonate (CO<sub>3</sub><sup>2-</sup>)</td>
+                                    <td><input type="number" id="co3" class="ion-input anion" data-mw="60.01" data-z="2" value="0.8" step="any"></td>
+                                    <td><span id="co3-meq">—</span></td>
+                                    <td><span id="co3-caco3">—</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Nitrate (NO<sub>3</sub><sup>-</sup>)</td>
+                                    <td><input type="number" id="no3" class="ion-input anion" data-mw="62.00" data-z="1" value="15.0" step="any"></td>
+                                    <td><span id="no3-meq">—</span></td>
+                                    <td><span id="no3-caco3">—</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Fluoride (F<sup>-</sup>)</td>
+                                    <td><input type="number" id="f" class="ion-input anion" data-mw="19.00" data-z="1" value="0.6" step="any"></td>
+                                    <td><span id="f-meq">—</span></td>
+                                    <td><span id="f-caco3">—</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Phosphate (PO<sub>4</sub><sup>3-</sup>)</td>
+                                    <td><input type="number" id="po4" class="ion-input anion" data-mw="94.97" data-z="3" value="0.1" step="any"></td>
+                                    <td><span id="po4-meq">—</span></td>
+                                    <td><span id="po4-caco3">—</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Silica (SiO<sub>2</sub>)*</td>
+                                    <td><input type="number" id="sio2" class="ion-input neutral" value="18.0" step="any"></td>
+                                    <td><span id="sio2-meq">0.0000</span></td>
+                                    <td><span id="sio2-caco3">0.00</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        </div>
+                    </div>
+                    <!-- Unified Totals Row -->
+                    <div style="margin-top: 1rem; padding: 1rem 1.5rem; background: var(--color-surface-container-high); border-radius: 8px; display: flex; justify-content: flex-end; align-items: center; gap: 3rem; border: 1px solid var(--color-outline-variant);">
+                        <div style="font-weight: 700; color: var(--color-on-surface-variant); text-transform: uppercase; font-size: 0.85rem;">Totals</div>
+                        <div style="font-weight: 700;">mg/L: <span id="total-mgl" style="color: #60a5fa; margin-left: 0.5rem;">0.00</span></div>
+                        <div style="font-weight: 700;">meq/L: <span id="total-meq" style="color: #60a5fa; margin-left: 0.5rem;">0.0000</span></div>
+                        <div style="font-weight: 700;">ppm CaCO<sub>3</sub>: <span id="total-caco3" style="color: #60a5fa; margin-left: 0.5rem;">0.00</span></div>
+                    </div>
+                    </div>
+                </section>
+            </main>
+
+            <!-- Results Sidebar -->
+            <aside class="results-panel" style="display: flex; flex-direction: column; gap: 1rem;">
+                <!-- System Units Card -->
+                <section class="card" style="margin-bottom: 0.75rem;">
+                    <div class="card-header">
+                        <h2 class="card-title">System Units</h2>
+                    </div>
+                    <div class="units-widget">
+                        <div class="unit-row">
+                            <span class="unit-label">Flow:</span>
+                            <div class="unit-radios">
+                                <label><input type="radio" name="flow-unit" value="gpm"> gpm</label>
+                                <label><input type="radio" name="flow-unit" value="m3/h" checked> m³/h</label>
+                                <label><input type="radio" name="flow-unit" value="gpd"> gpd</label>
+                                <label><input type="radio" name="flow-unit" value="m3/d"> m³/d</label>
+                            </div>
+                        </div>
+                        <div class="unit-row">
+                            <span class="unit-label">Pressure:</span>
+                            <div class="unit-radios">
+                                <label><input type="radio" name="pressure-unit" value="psi"> psi</label>
+                                <label><input type="radio" name="pressure-unit" value="bar" checked> bar</label>
+                            </div>
+                        </div>
+                        <div class="unit-row">
+                            <span class="unit-label">Temperature:</span>
+                            <div class="unit-radios">
+                                <label><input type="radio" name="temp-unit" value="F"> °F</label>
+                                <label><input type="radio" name="temp-unit" value="C" checked> °C</label>
+                            </div>
+                        </div>
+                        <div class="unit-row">
+                            <span class="unit-label">Flux:</span>
+                            <div class="unit-radios">
+                                <label><input type="radio" name="flux-unit" value="gfd"> gfd</label>
+                                <label><input type="radio" name="flux-unit" value="LMH" checked> LMH</label>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="card" id="feed-analysis-card">
+                    <div class="card-header">
+                        <h2 class="card-title">Analysis</h2>
+                    </div>
+                    
+                    <div class="cbe-display">
+                        <div class="cbe-label">Charge Balance Error</div>
+                        <div class="cbe-value" id="cbe-display">0.00%</div>
+                        <div class="cbe-status status-ok" id="cbe-status">PERFECT</div>
+                    </div>
+
+
+                    <div class="result-item">
+                        <span class="result-label">Calculated TDS</span>
+                        <span class="result-value"><span id="calc-tds">0</span> <span style="font-size:0.8rem; font-weight:normal; opacity:0.7">mg/L</span></span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Est. Conductivity</span>
+                        <span class="result-value"><span id="calc-ec">0</span> <span style="font-size:0.8rem; font-weight:normal; opacity:0.7">&mu;S/cm</span></span>
+                    </div>
+                    
+                    <div class="result-item">
+                        <span class="result-label">&Sigma; Cations</span>
+                        <span class="result-value"><span id="sum-cat">0.00</span> <span style="font-size:0.8rem; font-weight:normal; opacity:0.7">meq/L</span></span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">&Sigma; Anions</span>
+                        <span class="result-value"><span id="sum-an">0.00</span> <span style="font-size:0.8rem; font-weight:normal; opacity:0.7">meq/L</span></span>
+                    </div>
+                    
+                    <div class="result-item">
+                        <span class="result-label">Osmotic Pressure</span>
+                        <span class="result-value"><span id="osmotic-pressure">0.00</span> <span style="font-size:0.8rem; font-weight:normal; opacity:0.7" id="pressure-unit-label">bar</span></span>
+                    </div>
+
+                    <div class="recommendation-box" id="synthetic-box" style="display: none;">
+                        <h4><i class="fa-solid fa-wand-magic-sparkles"></i> Synthetic Balancing</h4>
+                        <p id="synthetic-text"></p>
+                    </div>
+                </section>
+            </aside>
+            </div>
+        </div>
+    </div>
+<!-- Login Modal Overlay -->
+<div id="login-overlay" style="display: flex; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.95); z-index: 100000; align-items: center; justify-content: center; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);">
+    <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 3rem 2.5rem; width: 100%; max-width: 420px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); display: flex; flex-direction: column; align-items: center;">
+        <img src="permionics_web.svg" alt="Permionics Logo" style="height: 48px; margin-bottom: 1.5rem; opacity: 0.9;">
+        <h2 style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 1.5rem; color: #fff; margin-bottom: 0.5rem; font-weight: 700;">Welcome to PACE</h2>
+        <p style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 2rem; text-align: center;">Please sign in to access the Permionics Analytical Calculation Engine.</p>
+        
+        <form id="login-form" style="width: 100%;" onsubmit="handleLoginSubmit(event)">
+            <div class="form-group" style="margin-bottom: 1.2rem;">
+                <label style="color: #cbd5e1; font-size: 0.85rem; margin-bottom: 0.4rem; display: block; font-weight: 500;">Username</label>
+                <input type="text" id="login-username" required placeholder="Enter username" style="width: 100%; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); background: rgba(15, 23, 42, 0.6); color: #fff; font-family: inherit; font-size: 0.95rem; outline: none; transition: all 0.2s;" onfocus="this.style.borderColor='#3b82f6'" onblur="this.style.borderColor='rgba(255,255,255,0.15)'">
+            </div>
+            <div class="form-group" style="margin-bottom: 1.5rem;">
+                <label style="color: #cbd5e1; font-size: 0.85rem; margin-bottom: 0.4rem; display: block; font-weight: 500;">Password</label>
+                <input type="password" id="login-password" required placeholder="Enter password" style="width: 100%; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); background: rgba(15, 23, 42, 0.6); color: #fff; font-family: inherit; font-size: 0.95rem; outline: none; transition: all 0.2s;" onfocus="this.style.borderColor='#3b82f6'" onblur="this.style.borderColor='rgba(255,255,255,0.15)'">
+            </div>
+            <div id="login-error" style="display: none; color: #ef4444; font-size: 0.85rem; margin-bottom: 1rem; text-align: center; background: rgba(239, 68, 68, 0.1); padding: 0.5rem; border-radius: 6px;">Invalid username or password.</div>
+            <button type="submit" id="login-submit-btn" class="btn-primary" style="width: 100%; padding: 0.85rem; font-size: 1rem; border-radius: 8px; font-weight: 600; display: flex; justify-content: center; align-items: center; gap: 0.5rem;">
+                Sign In
+            </button>
+        </form>
+    </div>
+</div>
+
+    <script src="script.js?v=93"></script>
+<div id="global-loader" class="pace-loader--overlay">
+  <div class="pace-loader" role="status" aria-live="polite" aria-label="Loading">
+    <svg width="180" height="76" viewBox="0 0 420 170" role="img" aria-label="Membrane vessel filling animation with wavy water flow">
+      <defs>
+        <clipPath id="pipeOuter4">
+          <rect x="60" y="78" width="298" height="14" rx="7"/>
+        </clipPath>
+        <clipPath id="progressClip4">
+          <rect class="clipfill" x="60" y="78" width="0" height="14"/>
+        </clipPath>
+        <linearGradient id="liquidBase4" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#6BB4F5"/>
+          <stop offset="50%" stop-color="#1E6FC4"/>
+          <stop offset="100%" stop-color="#0A3A6B"/>
+        </linearGradient>
+      </defs>
+      <ellipse cx="55" cy="85" rx="22" ry="48" fill="var(--input-bg)" stroke="#0C447C" stroke-width="2"/>
+      <ellipse cx="55" cy="85" rx="14" ry="32" fill="none" stroke="#85B7EB" stroke-width="1.2"/>
+      <path d="M 55 37 L 365 47 M 55 133 L 365 123" fill="none" stroke="#185FA5" stroke-width="2" stroke-linecap="round"/>
+      <ellipse cx="365" cy="85" rx="20" ry="38" fill="none" stroke="#0C447C" stroke-width="2"/>
+      <ellipse cx="365" cy="85" rx="12" ry="26" fill="none" stroke="#85B7EB" stroke-width="1.2"/>
+      <rect x="58" y="76" width="302" height="18" rx="9" fill="var(--input-bg)" stroke="#B5D4F4" stroke-width="1"/>
+      <g clip-path="url(#pipeOuter4)">
+        <g clip-path="url(#progressClip4)">
+          <rect x="60" y="78" width="298" height="14" fill="url(#liquidBase4)"/>
+          <g class="wave-back" opacity="0.55">
+            <path d="M44,82 Q56,77 68,82 T92,82 T116,82 T140,82 T164,82 T188,82 T212,82 T236,82 T260,82 T284,82 T308,82 T332,82 T356,82 T380,82 L380,92 L44,92 Z" fill="#3C8DDE"/>
+          </g>
+          <g class="wave-top" opacity="0.8">
+            <path d="M40,80 Q48,77.5 56,80 T72,80 T88,80 T104,80 T120,80 T136,80 T152,80 T168,80 T184,80 T200,80 T216,80 T232,80 T248,80 T264,80 T280,80 T296,80 T312,80 T328,80 T344,80 T360,80 T376,80 L376,82 Q368,80.5 360,82 T344,82 T328,82 T312,82 T296,82 T280,82 T264,82 T248,82 T232,82 T216,82 T200,82 T184,82 T168,82 T152,82 T136,82 T120,82 T104,82 T88,82 T72,82 T56,82 T40,82 Z" fill="#9ED4F7"/>
+          </g>
+        </g>
+      </g>
+    </svg>
+  </div>
+</div>
+
+<style>
+.pace-loader{
+  display:flex !important;
+  flex-direction:column !important;
+  align-items:center !important;
+  justify-content:center !important;
+  gap:10px !important;
+  padding:20px !important;
+  background:transparent !important;
+  border-radius:12px !important;
+  margin:auto !important;
+}
+.pace-loader img {
+  transition: filter 0.3s ease;
+}
+[data-theme="dark"] .pace-loader img {
+  filter: brightness(0) invert(1);
+}
+@keyframes fillgrow{0%{width:0px}70%{width:298px}100%{width:298px}}
+@keyframes wavescroll1{0%{transform:translateX(0)}100%{transform:translateX(-48px)}}
+@keyframes wavescroll2{0%{transform:translateX(0)}100%{transform:translateX(-32px)}}
+.clipfill{animation:fillgrow 2.6s cubic-bezier(.4,0,.2,1) infinite}
+.wave-back{animation:wavescroll1 1.1s linear infinite}
+.wave-top{animation:wavescroll2 0.8s linear infinite}
+
+.pace-loader--overlay{
+  position:fixed !important;
+  top:0 !important;
+  left:0 !important;
+  width:100vw !important;
+  height:100vh !important;
+  z-index:99999 !important;
+  display:none;
+  align-items:center !important;
+  justify-content:center !important;
+  background:transparent !important;
+  margin:0 !important;
+  padding:0 !important;
+  box-sizing:border-box !important;
+}
+
+[data-theme="dark"] .pace-loader--overlay {
+  background: transparent !important;
+}
+
+.pace-loader--overlay.is-active{
+  display:flex !important;
+}
+
+/* Pretreatment Step Styling */
+.pretreatment-step {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-bottom: 0.6rem;
+  padding: 0.8rem 1rem;
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 6px;
+  border: 1px solid var(--card-border);
+}
+[data-theme="dark"] .pretreatment-step {
+  background: rgba(255, 255, 255, 0.03);
+}
+.pretreatment-step i {
+  color: var(--primary-color);
+  font-size: 1.1rem;
+  min-width: 1.5rem;
+  text-align: center;
+}
+.pretreatment-step:last-child {
+  margin-bottom: 0;
+}
+</style>
+
+
+
+    <!-- Membrane Directory Modal Overlay -->
+    <div id="membrane-db-modal" class="pace-modal-overlay">
+        <div class="pace-modal-box" style="max-width: 950px; width: 95%;">
+            <div class="pace-modal-header">
+                <h3 class="pace-modal-title">Membrane &amp; Module Directory</h3>
+                <button class="pace-modal-close" onclick="closeMembraneDbModal()">&times;</button>
+            </div>
+            <div class="pace-modal-body">
+                <div class="membrane-tabs" style="display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem;">
+                    <button class="btn tab-pill active" id="mem-tab-ro" onclick="switchMembraneTypeTab('RO')" style="padding: 0.35rem 1rem; font-size: 0.85rem; border-radius: 15px; border: 1px solid var(--accent-color); background: rgba(59, 130, 246, 0.1); color: var(--text-primary); cursor: pointer; font-weight: 600; outline: none;">RO Membranes</button>
+                    <button class="btn tab-pill" id="mem-tab-nf" onclick="switchMembraneTypeTab('NF')" style="padding: 0.35rem 1rem; font-size: 0.85rem; border-radius: 15px; border: 1px solid transparent; background: transparent; color: var(--text-secondary); cursor: pointer; font-weight: 600; outline: none;">NF Membranes</button>
+                    <button class="btn tab-pill" id="mem-tab-uf" onclick="switchMembraneTypeTab('UF')" style="padding: 0.35rem 1rem; font-size: 0.85rem; border-radius: 15px; border: 1px solid transparent; background: transparent; color: var(--text-secondary); cursor: pointer; font-weight: 600; outline: none;">UF Modules</button>
+                </div>
+                <div class="pace-db-search-container">
+                    <input type="text" id="pace-db-search" class="pace-db-search-input" placeholder="Search by model or specifications..." oninput="filterMembraneDbTable()">
+                    <span style="font-size: 0.825rem; color: var(--text-secondary);" id="pace-db-count">Loading membranes...</span>
+                </div>
+                <div style="overflow-x: auto; height: 500px; max-height: 55vh; border: 1px solid var(--card-border); border-radius: 8px;">
+                    <table class="pace-db-table">
+                        <thead>
+                            <tr>
+                                <th>Model Name</th>
+                                <th>Type</th>
+                                <th>Material</th>
+                                <th>Active Area</th>
+                                <th>Spacer Thickness</th>
+                                <th>Nominal Rejection</th>
+                                <th>Max Press</th>
+                                <th>Max Flow</th>
+                                <th>Test Recovery</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pace-db-tbody">
+                            <!-- Populated dynamically via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Information Modal Overlay -->
+    <div id="user-info-modal" class="pace-modal-overlay">
+        <div class="pace-modal-box" style="max-width: 800px;">
+            <div class="pace-modal-header">
+                <h3 class="pace-modal-title">User Information</h3>
+                <button class="pace-modal-close" onclick="closeUserInfoModal()">&times;</button>
+            </div>
+            <div class="pace-modal-body" style="padding: 1.5rem 2rem;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                    <!-- Column 1: Contact Information -->
+                    <div class="user-info-group">
+                        <div class="user-info-group-title">Contact Information</div>
+                        <div style="display: flex; flex-direction: column; gap: 0.75rem; padding: 0.5rem 0 0 0;">
+                            <div class="user-info-field">
+                                <label>First Name:</label>
+                                <input type="text" id="user-first-name" value="Wave">
+                            </div>
+                            <div class="user-info-field">
+                                <label>Last Name:</label>
+                                <input type="text" id="user-last-name" value="Tango">
+                            </div>
+                            <div class="user-info-field">
+                                <label>Company:</label>
+                                <input type="text" id="user-company" value="DuPont">
+                            </div>
+                            <div class="user-info-field">
+                                <label>E-mail:</label>
+                                <input type="email" id="user-email" value="WAVE@dupont.com">
+                            </div>
+                            <div class="user-info-field">
+                                <label>Office:</label>
+                                <input type="text" id="user-office" value="6031">
+                            </div>
+                            <div class="user-info-field">
+                                <label>Mobile:</label>
+                                <input type="text" id="user-mobile" placeholder="Mobile phone">
+                            </div>
+                            <div class="user-info-field">
+                                <label>Fax:</label>
+                                <input type="text" id="user-fax" placeholder="Fax number">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Column 2: Address and Language -->
+                    <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+                        <!-- Address Group -->
+                        <div class="user-info-group">
+                            <div class="user-info-group-title">Address</div>
+                            <div style="display: flex; flex-direction: column; gap: 0.75rem; padding: 0.5rem 0 0 0;">
+                                <div class="user-info-field">
+                                    <label>Street Address:</label>
+                                    <input type="text" id="user-street" placeholder="Street name & number">
+                                </div>
+                                <div class="user-info-field">
+                                    <label>City:</label>
+                                    <input type="text" id="user-city" placeholder="City">
+                                </div>
+                                <div class="user-info-field">
+                                    <label>Country:</label>
+                                    <input type="text" id="user-country" placeholder="Country">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Language Group -->
+                        <div class="user-info-group">
+                            <div class="user-info-group-title">Language</div>
+                             <div style="display: flex; flex-direction: column; gap: 0.75rem; padding: 0.5rem 0 0 0;">
+                                <div class="user-info-field">
+                                    <label>User Interface Language:</label>
+                                    <select id="user-ui-lang">
+                                        <option value="English-United States">English-United States</option>
+                                        <option value="English-United Kingdom">English-United Kingdom</option>
+                                        <option value="Spanish">Spanish (Español)</option>
+                                        <option value="French">French (Français)</option>
+                                        <option value="German">German (Deutsch)</option>
+                                        <option value="Hindi">Hindi (हिन्दी)</option>
+                                        <option value="Bengali">Bengali (বাংলা)</option>
+                                        <option value="Marathi">Marathi (मराठी)</option>
+                                        <option value="Telugu">Telugu (తెలుగు)</option>
+                                        <option value="Tamil">Tamil (தமிழ்)</option>
+                                        <option value="Gujarati">Gujarati (ગુજરાતી)</option>
+                                        <option value="Urdu">Urdu (اردو)</option>
+                                        <option value="Kannada">Kannada (ಕನ್ನಡ)</option>
+                                        <option value="Odia">Odia (ଓଡ଼ିଆ)</option>
+                                        <option value="Malayalam">Malayalam (മലയാളം)</option>
+                                        <option value="Punjabi">Punjabi (ਪੰਜਾਬੀ)</option>
+                                        <option value="Chinese">Chinese (中文)</option>
+                                        <option value="Japanese">Japanese (日本語)</option>
+                                        <option value="Arabic">Arabic (العربية)</option>
+                                        <option value="Portuguese">Portuguese (Português)</option>
+                                        <option value="Russian">Russian (Русский)</option>
+                                        <option value="Italian">Italian (Italiano)</option>
+                                        <option value="Dutch">Dutch (Nederlands)</option>
+                                        <option value="Korean">Korean (한국어)</option>
+                                        <option value="Turkish">Turkish (Türkçe)</option>
+                                        <option value="Polish">Polish (Polski)</option>
+                                        <option value="Swedish">Swedish (Svenska)</option>
+                                    </select>
+                                </div>
+                                <div class="user-info-field">
+                                    <label>Report Language:</label>
+                                    <select id="user-report-lang">
+                                        <option value="English-United States">English-United States</option>
+                                        <option value="English-United Kingdom">English-United Kingdom</option>
+                                        <option value="Spanish">Spanish (Español)</option>
+                                        <option value="French">French (Français)</option>
+                                        <option value="German">German (Deutsch)</option>
+                                        <option value="Hindi">Hindi (हिन्दी)</option>
+                                        <option value="Bengali">Bengali (বাংলা)</option>
+                                        <option value="Marathi">Marathi (मराठी)</option>
+                                        <option value="Telugu">Telugu (తెలుగు)</option>
+                                        <option value="Tamil">Tamil (தமிழ்)</option>
+                                        <option value="Gujarati">Gujarati (ગુજરાતી)</option>
+                                        <option value="Urdu">Urdu (اردو)</option>
+                                        <option value="Kannada">Kannada (ಕನ್ನಡ)</option>
+                                        <option value="Odia">Odia (ଓଡ଼ିଆ)</option>
+                                        <option value="Malayalam">Malayalam (മലയാളം)</option>
+                                        <option value="Punjabi">Punjabi (ਪੰਜਾਬੀ)</option>
+                                        <option value="Chinese">Chinese (中文)</option>
+                                        <option value="Japanese">Japanese (日本語)</option>
+                                        <option value="Arabic">Arabic (العربية)</option>
+                                        <option value="Portuguese">Portuguese (Português)</option>
+                                        <option value="Russian">Russian (Русский)</option>
+                                        <option value="Italian">Italian (Italiano)</option>
+                                        <option value="Dutch">Dutch (Nederlands)</option>
+                                        <option value="Korean">Korean (한국어)</option>
+                                        <option value="Turkish">Turkish (Türkçe)</option>
+                                        <option value="Polish">Polish (Polski)</option>
+                                        <option value="Swedish">Swedish (Svenska)</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bottom actions -->
+                <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1rem; border-top: 1px solid var(--card-border); padding-top: 1rem;">
+                    <button class="btn" style="border: 1px solid var(--input-border); background: transparent; color: var(--text-primary); font-weight: 600; padding: 0.6rem 1.5rem;" onclick="closeUserInfoModal()">Cancel</button>
+                    <button class="btn-primary" style="padding: 0.6rem 2rem;" onclick="saveUserInfoModal()">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<!-- Sticky Footer Status Bar -->
+<footer class="pace-footer" id="pace-main-footer">
+    <div class="footer-status">
+        <div class="status-dot" id="footer-status-dot"></div>
+        <span class="status-label">PROJECT STATUS: <span id="footer-project-status" style="font-weight:400;text-transform:none;">Ready</span></span>
+        <div class="status-divider"></div>
+        <span class="status-saved">Last Saved: <span id="footer-last-saved">Not yet saved</span></span>
+    </div>
+    <div class="footer-actions">
+        <button class="btn-secondary" onclick="window.location.reload()"><i class="fa-solid fa-rotate"></i> Reset All</button>
+        <button class="btn-secondary" onclick="loadProjectFromFile()"><i class="fa-solid fa-folder-open"></i> Load Project</button>
+        <button class="btn-primary" id="footer-save-btn" onclick="saveProjectDetails(event)"><i class="fa-solid fa-floppy-disk"></i> Save Project</button>
+    </div>
+</footer>
+
+</body>
+</html>
+
+
