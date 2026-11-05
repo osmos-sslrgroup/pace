@@ -30,7 +30,7 @@ NZ           = 10       # axial segments per element
 DT_H         = 730.0    # monthly timestep [hours]  (~1 month)
 R_GAS        = 8.314    # J/(mol·K)
 Ds_25        = 1.6e-9   # solute diffusivity at 25 °C [m²/s]
-MU_25        = 8.9e-4   # water viscosity at 25 °C [Pa·s]
+MU_25        = 8.904e-4   # water viscosity at 25 °C [Pa·s] via Vogel equation
 RHO_W        = 1000.0   # water density [kg/m³]
 
 # ---------------------------------------------------------------------------
@@ -159,8 +159,9 @@ DEFAULT_PHYSICS_PARAMS.update({
 # ---------------------------------------------------------------------------
 
 def _mu_water(temp_c: float) -> float:
-    """Dynamic viscosity of water [Pa·s] as function of temperature [°C]."""
-    return 1.0e-3 * math.exp(1808.0 / (temp_c + 273.15) - 6.354)
+    """Dynamic viscosity of water [Pa·s] as function of temperature [°C] via Vogel equation."""
+    t_k = temp_c + 273.15
+    return 2.414e-5 * math.pow(10.0, 247.8 / max(1.0, t_k - 140.0))
 
 
 def _Ds(temp_c: float) -> float:
@@ -231,6 +232,7 @@ class PhysicsAgingEngine:
         antiscalant_dosed: bool = True,
         recycle_feed_ions: dict = None,   # blended feed ions when concentrate recycle is active
         bulk_si: dict = None,
+        antiscalant_type: str = "Phosphonate",
     ) -> dict:
         """
         Run physics-based multi-year membrane aging projection.
@@ -293,12 +295,12 @@ class PhysicsAgingEngine:
         A0_lmh_bar  = membrane["permeability_A"]              # L/(m²·h·bar)
         B0_ms       = membrane["permeability_B"]              # m/s
         area_m2     = membrane["active_area_m2"]
-        spacer_mil  = membrane.get("feed_spacer_mil", 34)
+        spacer_mil  = membrane.get("feed_spacer_mil", 31)
         t_fs        = spacer_mil * 2.54e-5                    # spacer thickness [m]
-        dh          = 2.0 * t_fs                              # hydraulic diameter [m]
+        eps_ch      = 0.90                                    # void fraction
+        dh          = (4.0 * eps_ch) / ((2.0 / t_fs) + ((1.0 - eps_ch) * 8.0 / t_fs))  # hydraulic diameter [m]
         length_m    = membrane.get("length_m", 1.016)
         w_total     = area_m2 / (2.0 * length_m)             # channel width [m]
-        eps_ch      = 0.90                                    # void fraction
 
         # Unit-consistent membrane resistance
         # A0 [L/(m²·h·bar)] → A0_SI [m/(s·Pa)]
@@ -327,11 +329,25 @@ class PhysicsAgingEngine:
         self.p["BDOC"] = max(1e-8, 0.4 * toc / 1.0e6)         # [kg/m³] (mg/L→kg/m³)
         nom_bulk       = 0.6 * toc / 1.0e6                     # [kg/m³]
 
-        # Antiscalant: extend induction by 10×
-        t_ind_factor = 10.0 if antiscalant_dosed else 1.0
+        # Antiscalant kinetics by chemistry type (CHANGE 8)
+        if not antiscalant_dosed or str(antiscalant_type).lower() in ("none", "false"):
+            t_ind_factor = 1.0
+            as_growth_suppression = 1.0
+        elif str(antiscalant_type).lower() == "dendrimer":
+            t_ind_factor = 20.0
+            as_growth_suppression = 0.10
+        elif str(antiscalant_type).lower() == "polycarboxylate":
+            t_ind_factor = 15.0
+            as_growth_suppression = 0.15
+        else: # Standard phosphonate
+            t_ind_factor = 10.0
+            as_growth_suppression = 0.20
+        self.as_growth_suppression = as_growth_suppression
 
         # ---- Year-0 snapshot (exact pass-through) --------------------
         bsum = baseline_ro_result["summary"]
+        p_perm = bsum.get("permeate_pressure_bar", 0.0)
+        self.p_perm = p_perm
 
         # Compute Year 0 wall SI from baseline CP.
         # At Year 0, membrane is clean (Rm only). Average flux from baseline:
@@ -463,12 +479,8 @@ class PhysicsAgingEngine:
             NDP_0 = (sum(e.get("ndp", 1.0) for e in elements_y0) / len(elements_y0))
         else:
             # Derive NDP_0 from baseline: NDP ≈ Pfeed - Pp - pi_osm
-            # pi_osm ≈ feed_pressure * (1 - recovery) / 2  (rough midpoint osmotic)
-            # More directly: at Year 0, TMP ≈ Pfeed - Pp (Pp ≈ 0.5 bar typically)
-            # Use feed_pressure - 0.5 (permeate backpressure) - osmotic
-            # Osmotic for typical BWRO: ~2-6 bar. Use P0_bar * r0 as proxy.
             pi_est = P0_bar * r0 * 0.5   # rough osmotic estimate
-            NDP_0  = max(P0_bar - 0.5 - pi_est, 1.0)
+            NDP_0  = max(P0_bar - p_perm - pi_est, 1.0)
 
         # ---- Calibrate A0_lmh_bar to match user's P0_bar ----------------
         # The membrane catalog A0 might differ from the actual baseline performance.
@@ -483,7 +495,8 @@ class PhysicsAgingEngine:
                 res_calib = self.ro_engine.simulate_system(
                     feed_flow_m3h, P0_bar, effective_feed_ions, temp_c,
                     membrane_model, stages, vessels_per_stage,
-                    elements_per_vessel, aged_params=aged_params
+                    elements_per_vessel, aged_params=aged_params,
+                    permeate_pressure_bar=p_perm
                 )
                 if res_calib["summary"]["total_recovery"] < r0:
                     A_lo = A_mid
@@ -577,7 +590,8 @@ class PhysicsAgingEngine:
                     feed_flow_m3h, P_curr_bar, effective_feed_ions, temp_c, membrane,
                     stages, vessels_per_stage, elements_per_vessel,
                     Rc_seg, Rb_seg, Rs_seg, Rn_seg, Rcomp_elem, B_IRR,
-                    eps_comp, Rm_base, dh, t_fs, w_total, eps_ch, length_m
+                    eps_comp, Rm_base, dh, t_fs, w_total, eps_ch, length_m,
+                    p_perm=p_perm
                 )
 
                 # ---------------------------------------------------------
@@ -758,7 +772,7 @@ class PhysicsAgingEngine:
                 Rc_seg_avg, Rb_seg_avg, Rs_seg_avg, Rn_seg_avg, Rcomp_elem,
                 B_IRR, eps_comp, Rm_base, A0_lmh_bar, B0_ms,
                 n_total_elem, t_SI, delta_s_avg, Lb_avg, mc_avg, q_nom_avg,
-                cip_count_total, membrane
+                cip_count_total, membrane, p_perm=p_perm
             )
             snap["cip_count"] = cip_count_total
 
@@ -948,7 +962,8 @@ class PhysicsAgingEngine:
         feed_flow_m3h, Pfeed_bar, feed_ions, temp_c, membrane,
         stages, vessels_per_stage, elements_per_vessel,
         Rc_seg, Rb_seg, Rs_seg, Rn_seg, Rcomp_elem, B_IRR,
-        eps_comp, Rm_base, dh, t_fs, w_total, eps_ch, length_m
+        eps_comp, Rm_base, dh, t_fs, w_total, eps_ch, length_m,
+        p_perm: float = 0.0,
     ) -> list:
         """
         Compute per-segment transport quantities (Jw, kM, tau_w, TMP, etc.)
@@ -959,6 +974,8 @@ class PhysicsAgingEngine:
         list[n_total_elem][NZ]  of dicts with keys:
             Jw, kM, tau_w, TMP_Pa, Cf_bulk, pi_feed_Pa
         """
+        if p_perm == 0.0 and hasattr(self, "p_perm"):
+            p_perm = self.p_perm
         mu   = _mu_water(temp_c)
         Ds_T = _Ds(temp_c)
         T_K  = temp_c + 273.15
@@ -1017,14 +1034,14 @@ class PhysicsAgingEngine:
                     q_loc   = q_in * frac_remaining
                     v_cross = q_loc / max(a_cross, 1e-6)       # m/s
 
-                    # Reynolds, Schmidt, Sherwood (Schock-Miquel axial)
+                    # Reynolds, Schmidt, Sherwood
                     Re  = max(1.0, RHO_W * v_cross * dh / mu)
                     Sc  = max(1.0, mu / (RHO_W * Ds_T))
-                    Sh  = 0.065 * (Re**0.875) * (Sc**0.25)
+                    Sh  = 0.050 * (Re**0.875) * (Sc**0.25)
                     kM  = max(1e-7, Sh * Ds_T / dh)            # m/s
 
                     # Local TMP (Pa)
-                    TMP_Pa = max(0.0, (v_press - 0.5) * 1.0e5 - pi_feed_Pa)
+                    TMP_Pa = max(0.0, (v_press - p_perm) * 1.0e5 - pi_feed_Pa)
 
                     # Local flux using resistance-in-series
                     Rtot_local = (Rm_base
@@ -1208,8 +1225,8 @@ class PhysicsAgingEngine:
         # d(delta_s)/dt = kg * (S-1)^ns / rho   — driving force is (S-1), not SI
         if t_SI > t_ind_base and si_w > 0:
             SI_excess = max(0.0, S - 1.0)      # (S-1) is the true driving force
-            # Antiscalant suppresses growth rate by 80% in addition to induction delay
-            growth_suppression = 0.20 if t_ind_factor > 1.0 else 1.0
+            # Antiscalant suppresses growth rate according to chemistry type
+            growth_suppression = getattr(self, "as_growth_suppression", 0.20) if t_ind_factor > 1.0 else 1.0
             # kg_calcite is already a linear growth rate [m/s], do not divide by density
             growth_rate = (
                 p["kg_calcite"]
@@ -1372,12 +1389,15 @@ class PhysicsAgingEngine:
         t_SI: list, delta_s: list, Lb: list, mc: list, q_nom: list,
         cip_count: int,
         membrane: dict,
+        p_perm: float = 0.0,
     ) -> dict:
         """
         Build the aged_params dict and call ROEngine.simulate_system() via
         bisection to find the pressure needed to restore target recovery.
         Compute ASTM D4516-19a normalised metrics and all fouling indicators.
         """
+        if p_perm == 0.0 and hasattr(self, "p_perm"):
+            p_perm = self.p_perm
         # ---- Average resistances per element -------------------------
         Rc_elem   = [sum(Rc_seg[ei]) / NZ for ei in range(n_total_elem)]
         Rb_elem   = [sum(Rb_seg[ei]) / NZ for ei in range(n_total_elem)]
@@ -1399,7 +1419,7 @@ class PhysicsAgingEngine:
         rho_cake = self.p.get("rho_cake", 2000.0)
         eps_cake = self.p.get("eps_cake", 0.40)
         tau_cake = 1.0 / eps_cake
-        mu_T = 8.9e-4 * math.exp(2500.0 * (1.0/(temp_c+273.15) - 1.0/298.15))
+        mu_T = _mu_water(temp_c)
         CP_clean = _safe_exp(Jw_avg / kM_avg)
 
         # ---- FRI per element -----------------------------------------
@@ -1471,7 +1491,8 @@ class PhysicsAgingEngine:
                 res = self.ro_engine.simulate_system(
                     feed_flow_m3h, P_mid, feed_ions, temp_c,
                     membrane_model, stages, vessels_per_stage,
-                    elements_per_vessel, aged_params=aged_params
+                    elements_per_vessel, aged_params=aged_params,
+                    permeate_pressure_bar=p_perm
                 )
                 rec_mid = res["summary"]["total_recovery"]
                 best_result = res
@@ -1493,7 +1514,8 @@ class PhysicsAgingEngine:
                 best_result = self.ro_engine.simulate_system(
                     feed_flow_m3h, P0_bar, feed_ions, temp_c,
                     membrane_model, stages, vessels_per_stage,
-                    elements_per_vessel, aged_params=aged_params
+                    elements_per_vessel, aged_params=aged_params,
+                    permeate_pressure_bar=p_perm
                 )
             except Exception:
                 # Last resort: return degraded year0 snapshot
