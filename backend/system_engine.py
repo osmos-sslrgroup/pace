@@ -184,6 +184,46 @@ class SystemEngine:
             # No UF, RO feed is direct from system feed flow
             ro_feed_flow = target_flow
             
+        # Standalone UF train (CHANGE 9)
+        if train == "UF":
+            eco_params = input_data.get("economic_params") or {}
+            avail = eco_params.get("plant_availability", 0.90)
+            hours_pa = avail * 8760.0
+            uf_summary = uf_res.get("overview", {})
+            q_net = uf_summary.get("net_product_m3h", target_flow)
+            q_annual = q_net * hours_pa
+
+            uf_modules = uf_res.get("sizing", {}).get("total_modules", 1)
+            uf_unit_cost = eco_params.get("uf_module_cost_inr", 65000.0)
+            uf_capex_mem = uf_modules * uf_unit_cost
+            uf_equip_sub = uf_capex_mem * 2.0
+            ic_factor = eco_params.get("installation_factor", 0.15)
+            cont_factor = eco_params.get("contingency_factor", 0.10)
+            uf_capex_total = uf_equip_sub * (1.0 + ic_factor) * (1.0 + cont_factor)
+
+            uf_kw = uf_res.get("power", {}).get("total_kw", 0.0)
+            tariff = eco_params.get("electricity_tariff", 7.50)
+            uf_energy_pa = uf_kw * hours_pa * tariff
+            uf_life = eco_params.get("uf_membrane_lifetime", 7.0)
+            uf_repl_pa = uf_capex_mem / max(1.0, uf_life)
+            uf_chem_pa = 7.0e-3 * q_annual * 30.0
+            uf_opex_total = uf_energy_pa + uf_repl_pa + uf_chem_pa
+
+            discount_rate = eco_params.get("discount_rate", 0.10)
+            project_life = eco_params.get("project_life", 20.0)
+            crf = (discount_rate * ((1 + discount_rate) ** project_life)) / (((1 + discount_rate) ** project_life) - 1) if discount_rate > 0 else 0.05
+            annualised_capex = uf_capex_total * crf
+            cost_per_kl = (annualised_capex + uf_opex_total) / max(1.0, q_annual)
+
+            result["economics"] = {
+                "capex": {"total_capex_inr": round(uf_capex_total, 2), "uf_membranes_inr": round(uf_capex_mem, 2)},
+                "opex": {"total_opex_pa_inr": round(uf_opex_total, 2), "energy_cost_pa_inr": round(uf_energy_pa, 2), "uf_mem_repl_pa_inr": round(uf_repl_pa, 2)},
+                "metrics": {"cost_per_kl_inr": round(cost_per_kl, 2), "annual_production_kl": round(q_annual, 0)}
+            }
+            result["uf_module"] = input_data.get("uf_module", "PERMA-UF-i0875s40")
+            result["target_flow_m3h"] = target_flow
+            return result
+
         # 2. RO/NF Simulation
         if "RO" in train or "NF" in train:
             # Extract ions from feed
@@ -208,6 +248,20 @@ class SystemEngine:
                 "Mn": feed.get("manganese", 0)
             }
             
+            # Feed conditioning and degasser before RO bisection (CHANGE 3 & 4)
+            cond_cfg = input_data.get("conditioning") or {}
+            feed_cond_cfg = cond_cfg.get("feed_conditioning") or (cond_cfg if cond_cfg.get("apply_to_feed", False) else {})
+            feed_degas_cfg = input_data.get("degasser") or {}
+            if feed_cond_cfg.get("enabled", False) or feed_degas_cfg.get("enabled", False):
+                from conditioning import apply_conditioning
+                ions, feed_dose, cond_feed_ph = apply_conditioning(ions, feed_cond_cfg, feed_degas_cfg)
+                feed["ph"] = cond_feed_ph
+                result["feed_conditioning"] = {
+                    "dose_mg_l": feed_dose,
+                    "target_ph": cond_feed_ph,
+                    "chemical": feed_cond_cfg.get("chemical")
+                }
+            
             # Determine starting pressure based on TDS (rough estimate for converging solver)
             est_osmotic_bar = (sum(ions.values()) / 1000.0) * 0.7 # rough rule of thumb
             
@@ -229,7 +283,10 @@ class SystemEngine:
                     membrane_model=input_data.get("ro_membrane", "BW30-400"),
                     stages=input_data.get("stages", 2),
                     vessels_per_stage=input_data.get("vessels_per_stage", [4, 2]),
-                    elements_per_vessel=input_data.get("elements_per_vessel", 6)
+                    elements_per_vessel=input_data.get("elements_per_vessel", 6),
+                    permeate_pressure_bar=input_data.get("permeate_pressure_bar", input_data.get("permeate_backpressure", 0.0)),
+                    enable_booster=input_data.get("enable_booster", False),
+                    interboost_dp_bar=input_data.get("interboost_dp_bar", None)
                 )
                 rec = ro_res["summary"]["total_recovery"]
                 if abs(rec - target_recovery) < tol:
@@ -240,6 +297,21 @@ class SystemEngine:
                     high_p = mid_p
             
             result["ro_results"] = ro_res
+
+            # Permeate conditioning and degasser after RO results (CHANGE 3 & 4)
+            perm_cond_cfg = cond_cfg.get("permeate_conditioning") or (cond_cfg if not cond_cfg.get("apply_to_feed", False) else {})
+            perm_degas_cfg = input_data.get("permeate_degasser") or {}
+            if perm_cond_cfg.get("enabled", False) or perm_degas_cfg.get("enabled", False):
+                from conditioning import apply_conditioning
+                raw_perm_ions = ro_res["summary"].get("perm_ions", {}).copy()
+                conditioned_perm_ions, perm_dose, cond_perm_ph = apply_conditioning(raw_perm_ions, perm_cond_cfg, perm_degas_cfg)
+                ro_res["summary"]["conditioned_perm_ions"] = conditioned_perm_ions
+                ro_res["summary"]["perm_ph"] = cond_perm_ph
+                result["permeate_conditioning"] = {
+                    "dose_mg_l": perm_dose,
+                    "target_ph": cond_perm_ph,
+                    "chemical": perm_cond_cfg.get("chemical")
+                }
 
             # ----------------------------------------------------------------
             # NF-SPECIFIC ANALYSIS (feed quality, concentrate scaling, hard stop)
@@ -487,7 +559,16 @@ class SystemEngine:
                 # uf_mem_repl_pa already computed above (0.0 when no UF)
                 total_mem_repl_pa = ro_mem_repl_pa + uf_mem_repl_pa
                 
-                total_opex_pa = energy_cost_pa + total_mem_repl_pa + uf_chem_cost_pa
+                # Antiscalant chemical OPEX (CHANGE 8)
+                as_type = input_data.get("antiscalant_type", "Phosphonate")
+                as_dose = input_data.get("antiscalant_dose_mg_l", 3.0)
+                as_costs = {"Phosphonate": 250.0, "Polycarboxylate": 320.0, "Dendrimer": 450.0}
+                as_cost_kg = as_costs.get(as_type, 280.0)
+                antiscalant_cost_pa = 0.0
+                if input_data.get("antiscalant_dosed", True):
+                    antiscalant_cost_pa = (ro_feed_flow * hours_pa * (as_dose / 1000.0)) * as_cost_kg
+
+                total_opex_pa = energy_cost_pa + total_mem_repl_pa + uf_chem_cost_pa + antiscalant_cost_pa
                 
                 # Cost per KL
                 discount_rate = eco_params.get("discount_rate", 0.10)
@@ -524,6 +605,7 @@ class SystemEngine:
                         "uf_mem_repl_pa_inr": round(uf_mem_repl_pa, 2),
                         "membrane_repl_pa_inr": round(total_mem_repl_pa, 2),  # kept for backward compat
                         "uf_ceb_chemicals_pa_inr": round(uf_chem_cost_pa, 2),
+                        "antiscalant_cost_pa_inr": round(antiscalant_cost_pa, 2),
                         "total_opex_pa_inr": round(total_opex_pa, 2)
                     },
                     "metrics": {
@@ -768,7 +850,9 @@ class SystemEngine:
                     membrane_model=pass1_cfg.get("membrane", "BW30-400"),
                     stages=pass1_cfg.get("stages", 2),
                     vessels_per_stage=pass1_cfg.get("vessels_per_stage", [4,2]),
-                    elements_per_vessel=pass1_cfg.get("elements_per_vessel", 6)
+                    elements_per_vessel=pass1_cfg.get("elements_per_vessel", 6),
+                    permeate_pressure_bar=input_data.get("permeate_pressure_bar", input_data.get("permeate_backpressure", 0.0)),
+                    enable_booster=input_data.get("enable_booster", False)
                 )
                 rec = p1_res["summary"]["total_recovery"]
                 if abs(rec - p1_target_rec) < 0.005: break
@@ -825,7 +909,9 @@ class SystemEngine:
                     stages=p2_stages,
                     vessels_per_stage=p2_vessels_per_stage,
                     elements_per_vessel=p2_elems_per_vessel,
-                    beta_cap=1.20
+                    beta_cap=None,
+                    permeate_pressure_bar=pass2_cfg.get("permeate_pressure_bar", 0.0),
+                    enable_booster=pass2_cfg.get("enable_booster", False)
                 )
                 rec = p2_res["summary"]["total_recovery"]
                 if abs(rec - p2_target_rec) < 0.005: break
