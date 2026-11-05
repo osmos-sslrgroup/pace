@@ -740,6 +740,7 @@
                             <label>Technology Train</label>
                             <select id="calc-tech-train">
                                 <option value="RO">RO Only</option>
+                                <option value="UF">UF Only</option>
                                 <option value="UF+RO">UF + RO</option>
                                 <option value="2P-RO">Two-Pass RO</option>
                                 <option value="UF+2P-RO">UF + Two-Pass RO</option>
@@ -779,7 +780,10 @@
                     </div>
                     <div class="input-grid">
                         <div class="input-group">
-                            <label>RO/NF Membrane Model</label>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                                <label style="margin-bottom: 0;">RO/NF Membrane Model</label>
+                                <button type="button" class="btn btn-secondary btn-sm" id="btn-view-datasheet" onclick="openMembraneDatasheetModal()" style="padding: 2px 8px; font-size: 0.75rem;" title="View Membrane Datasheet"><i class="fa-solid fa-file-lines"></i> Datasheet</button>
+                            </div>
                             <select id="calc-ro-membrane">
                                 <option value="HPA-RO-8040">Permionics HPA-RO-8040 (BWRO)</option>
                                 <option value="HPA-4040">Permionics HPA-4040 (BWRO)</option>
@@ -824,6 +828,147 @@
                     </div>
                 </section>
                 </div>
+
+                <!-- Interstage Booster Pump Configuration (CHANGE 5) -->
+                <section class="card" id="calc-booster-config-card">
+                    <div class="card-header">
+                        <h2 class="card-title"><i class="fa-solid fa-gauge-high"></i> Interstage Booster Pump</h2>
+                    </div>
+                    <div style="padding: 1rem 16px;">
+                        <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+                            <label class="switch">
+                                <input type="checkbox" id="calc-enable-booster">
+                                <span class="slider round"></span>
+                            </label>
+                            <span style="color: var(--text-color); font-weight: 500;">Enable Interstage Booster Pump</span>
+                        </div>
+                        <div id="calc-booster-options" style="display: none; background: rgba(0,0,0,0.05); padding: 1rem; border-radius: 6px; margin-top: 0.5rem;">
+                            <div class="input-grid">
+                                <div class="input-group">
+                                    <label>Booster Mode</label>
+                                    <select id="calc-booster-mode">
+                                        <option value="auto">Auto (Match Preceding Stage NDP)</option>
+                                        <option value="manual">Manual Boost Pressure (ΔP)</option>
+                                    </select>
+                                </div>
+                                <div class="input-group" id="calc-booster-dp-group" style="display: none;">
+                                    <label>Manual Boost Pressure <span class="unit">bar</span></label>
+                                    <input type="number" id="calc-booster-dp" value="0.0" step="0.1" min="0" max="25">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Chemical Conditioning & Decarbonation (CHANGE 3 & 4) -->
+                <section class="card" id="calc-conditioning-config-card">
+                    <div class="card-header">
+                        <h2 class="card-title"><i class="fa-solid fa-flask"></i> Chemical Conditioning & Decarbonation</h2>
+                    </div>
+                    <div style="padding: 1rem 16px;">
+                        <!-- Feed Pre-treatment pH Adjustment -->
+                        <div style="margin-bottom: 1.2rem;">
+                            <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+                                <label class="switch">
+                                    <input type="checkbox" id="calc-feed-ph-enable">
+                                    <span class="slider round"></span>
+                                </label>
+                                <span style="color: var(--text-color); font-weight: 500;">Feed Pre-treatment pH Adjustment</span>
+                            </div>
+                            <div id="calc-feed-ph-options" style="display: none; background: rgba(0,0,0,0.05); padding: 0.8rem 1rem; border-radius: 6px; margin-top: 0.5rem;">
+                                <div class="input-grid">
+                                    <div class="input-group">
+                                        <label>Target Feed pH</label>
+                                        <input type="number" id="calc-feed-target-ph" value="6.5" step="0.1" min="2" max="12">
+                                    </div>
+                                    <div class="input-group">
+                                        <label>Chemical Agent</label>
+                                        <select id="calc-feed-ph-chem">
+                                            <option value="H2SO4">Sulfuric Acid (H2SO4)</option>
+                                            <option value="HCl">Hydrochloric Acid (HCl)</option>
+                                            <option value="NaOH">Caustic Soda (NaOH)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Degasser / Decarbonator Tower -->
+                        <div style="margin-bottom: 1.2rem;">
+                            <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+                                <label class="switch">
+                                    <input type="checkbox" id="calc-degasser-enable">
+                                    <span class="slider round"></span>
+                                </label>
+                                <span style="color: var(--text-color); font-weight: 500;">Degasser / Decarbonator Tower</span>
+                            </div>
+                            <div id="calc-degasser-options" style="display: none; background: rgba(0,0,0,0.05); padding: 0.8rem 1rem; border-radius: 6px; margin-top: 0.5rem;">
+                                <div class="input-grid">
+                                    <div class="input-group">
+                                        <label>Stripping Efficiency <span class="unit">%</span></label>
+                                        <input type="number" id="calc-degasser-eff" value="95" min="50" max="99" step="1">
+                                    </div>
+                                    <div class="input-group">
+                                        <label>Residual CO2 Limit <span class="unit">mg/L</span></label>
+                                        <input type="number" id="calc-degasser-residual" value="5.0" min="1" max="25" step="0.5">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Permeate Post-treatment pH Adjustment -->
+                        <div>
+                            <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+                                <label class="switch">
+                                    <input type="checkbox" id="calc-perm-ph-enable">
+                                    <span class="slider round"></span>
+                                </label>
+                                <span style="color: var(--text-color); font-weight: 500;">Permeate Post-treatment pH Adjustment</span>
+                            </div>
+                            <div id="calc-perm-ph-options" style="display: none; background: rgba(0,0,0,0.05); padding: 0.8rem 1rem; border-radius: 6px; margin-top: 0.5rem;">
+                                <div class="input-grid">
+                                    <div class="input-group">
+                                        <label>Target Permeate pH</label>
+                                        <input type="number" id="calc-perm-target-ph" value="7.5" step="0.1" min="6" max="9.5">
+                                    </div>
+                                    <div class="input-group">
+                                        <label>Chemical Agent</label>
+                                        <select id="calc-perm-ph-chem">
+                                            <option value="NaOH">Caustic Soda (NaOH)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Antiscalant Dosing (CHANGE 8) -->
+                        <div style="margin-top: 1.2rem; border-top: 1px dashed rgba(0,0,0,0.1); padding-top: 1rem;">
+                            <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+                                <label class="switch">
+                                    <input type="checkbox" id="calc-antiscalant-enable" checked>
+                                    <span class="slider round"></span>
+                                </label>
+                                <span style="color: var(--text-color); font-weight: 500;">Antiscalant Dosing</span>
+                            </div>
+                            <div id="calc-antiscalant-options" style="background: rgba(0,0,0,0.05); padding: 0.8rem 1rem; border-radius: 6px; margin-top: 0.5rem;">
+                                <div class="input-grid">
+                                    <div class="input-group">
+                                        <label>Antiscalant Formulation</label>
+                                        <select id="calc-antiscalant-type">
+                                            <option value="Phosphonate">Phosphonate (Standard Carbonate &amp; Sulfate)</option>
+                                            <option value="Polycarboxylate">Polycarboxylate (High Ca/Ba/Sr Tolerance)</option>
+                                            <option value="Dendrimer">Dendrimer (High Reactive Silica Dispersant)</option>
+                                        </select>
+                                    </div>
+                                    <div class="input-group">
+                                        <label>Target Dosage <span class="unit">mg/L</span></label>
+                                        <input type="number" id="calc-antiscalant-dose" value="3.0" min="0.5" max="20" step="0.5">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
                 
                 <div id="calc-pass2-container" style="display: none; margin-top: 1rem; padding-top: 1rem; border-top: 2px dashed var(--card-border);">
                 <section class="card">
@@ -907,7 +1052,6 @@
                 </section>
                 </div>
 
-                
                 <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
                 <!-- Physics-Based Year Projection Panel           -->
                 <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
@@ -941,10 +1085,12 @@
                                     oninput="const d=document.getElementById('aging-cip-interval-display'); if(d) d.value=this.value; const h=document.getElementById('aging-cip-interval'); if(h) h.value=this.value*30;">
                             </div>
                             <div class="input-group">
-                                <label>Antiscalant Dosed</label>
-                                <select id="phys-antiscalant" onchange="const cb = document.getElementById('aging-antiscalant'); if(cb) cb.checked = (this.value === 'true');">
-                                    <option value="true">Yes</option>
-                                    <option value="false">No</option>
+                                <label>Antiscalant Formulation</label>
+                                <select id="phys-antiscalant">
+                                    <option value="Phosphonate">Phosphonate (Standard)</option>
+                                    <option value="Polycarboxylate">Polycarboxylate</option>
+                                    <option value="Dendrimer">Dendrimer</option>
+                                    <option value="None">None (Uninhibited)</option>
                                 </select>
                             </div>
                         </div>
@@ -1903,6 +2049,12 @@
                                     <td><span id="sio2-meq">0.0000</span></td>
                                     <td><span id="sio2-caco3">0.00</span></td>
                                 </tr>
+                                <tr>
+                                    <td>Boron (B)*</td>
+                                    <td><input type="number" id="b" class="ion-input neutral" value="0.0" step="any"></td>
+                                    <td><span id="b-meq">0.0000</span></td>
+                                    <td><span id="b-caco3">0.00</span></td>
+                                </tr>
                             </tbody>
                         </table>
                         </div>
@@ -2325,6 +2477,23 @@
                     <button class="btn" style="border: 1px solid var(--input-border); background: transparent; color: var(--text-primary); font-weight: 600; padding: 0.6rem 1.5rem;" onclick="closeUserInfoModal()">Cancel</button>
                     <button class="btn-primary" style="padding: 0.6rem 2rem;" onclick="saveUserInfoModal()">Save</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Membrane Datasheet Modal Overlay (CHANGE 6) -->
+    <div id="membrane-datasheet-modal" class="pace-modal-overlay">
+        <div class="pace-modal-box" style="max-width: 800px; width: 95%; max-height: 90vh; display: flex; flex-direction: column;">
+            <div class="pace-modal-header" style="display: flex; justify-content: space-between; align-items: center;">
+                <h3 class="pace-modal-title" id="mds-title"><i class="fa-solid fa-file-lines"></i> Membrane Manufacturer Datasheet</h3>
+                <button class="pace-modal-close" onclick="closeMembraneDatasheetModal()">&times;</button>
+            </div>
+            <div class="pace-modal-body" id="mds-body" style="padding: 1.5rem; overflow-y: auto; flex-grow: 1;">
+                <div style="text-align: center; color: var(--text-secondary); padding: 2rem;"><i class="fa-solid fa-spinner fa-spin"></i> Loading datasheet...</div>
+            </div>
+            <div style="display: flex; justify-content: flex-end; padding: 1rem 1.5rem; border-top: 1px solid var(--card-border);">
+                <button class="btn btn-primary" onclick="closeMembraneDatasheetModal()">Close</button>
             </div>
         </div>
     </div>

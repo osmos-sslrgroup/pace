@@ -2,6 +2,7 @@
 Full test of ReportGenerator using real SystemEngine output.
 """
 import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 sys.path.insert(0, os.path.dirname(__file__))
 
 from system_engine import SystemEngine

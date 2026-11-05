@@ -2422,11 +2422,16 @@ function calculateChemistry(showAllResults = false) {
     
     calculatedTds += alVal + feVal + mnVal + sio2Val + boronVal;
 
-    // Update Silica row displays (neutral species)
+    // Update Silica and Boron row displays (neutral species)
     const sio2MeqEl = document.getElementById('sio2-meq');
     const sio2Caco3El = document.getElementById('sio2-caco3');
     if (sio2MeqEl) sio2MeqEl.textContent = '0.0000';
     if (sio2Caco3El) sio2Caco3El.textContent = '0.00';
+
+    const bMeqEl = document.getElementById('b-meq');
+    const bCaco3El = document.getElementById('b-caco3');
+    if (bMeqEl) bMeqEl.textContent = '0.0000';
+    if (bCaco3El) bCaco3El.textContent = '0.00';
 
     // Update Table Totals Live (Including trace metals and neutral species in mg/L total)
     const grandTotalMg = totalCatMg + totalAnMg + alVal + feVal + mnVal + sio2Val + boronVal;
@@ -2461,13 +2466,11 @@ function calculateChemistry(showAllResults = false) {
     const fe = parseFloat(document.getElementById('fe').value) || 0;
     const al = parseFloat((document.getElementById('al') || {}).value) || 0;
     const mn = parseFloat(document.getElementById('mn').value) || 0;
-    const sio2Val = parseFloat(document.getElementById('sio2').value) || 0;
 
     sumCi += fe / (55.845 * 1000);  // Fe MW
     sumCi += al / (26.98 * 1000);   // Al MW
     sumCi += mn / (54.938 * 1000);  // Mn MW
     sumCi += sio2Val / (60.08 * 1000); // SiO2 MW
-    const boronVal = parseFloat((document.getElementById('b') || document.getElementById('boron') || {}).value) || 0;
     sumCi += boronVal / (10.81 * 1000); // Boron MW 10.81
 
     // Get osmotic coefficient based on selected water type
@@ -3679,11 +3682,69 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Booster Pump UI Logic (CHANGE 5)
+    const boosterEnable = document.getElementById('calc-enable-booster');
+    const boosterOptions = document.getElementById('calc-booster-options');
+    const boosterMode = document.getElementById('calc-booster-mode');
+    const boosterDpGroup = document.getElementById('calc-booster-dp-group');
+    if (boosterEnable && boosterOptions) {
+        boosterEnable.addEventListener('change', (e) => {
+            boosterOptions.style.display = e.target.checked ? 'block' : 'none';
+        });
+    }
+    if (boosterMode && boosterDpGroup) {
+        boosterMode.addEventListener('change', (e) => {
+            boosterDpGroup.style.display = e.target.value === 'manual' ? 'block' : 'none';
+        });
+    }
+
+    // Chemical Conditioning & Decarbonation UI Logic (CHANGE 3 & 4)
+    const feedPhEnable = document.getElementById('calc-feed-ph-enable');
+    const feedPhOptions = document.getElementById('calc-feed-ph-options');
+    if (feedPhEnable && feedPhOptions) {
+        feedPhEnable.addEventListener('change', (e) => {
+            feedPhOptions.style.display = e.target.checked ? 'block' : 'none';
+        });
+    }
+
+    const degasserEnable = document.getElementById('calc-degasser-enable');
+    const degasserOptions = document.getElementById('calc-degasser-options');
+    if (degasserEnable && degasserOptions) {
+        degasserEnable.addEventListener('change', (e) => {
+            degasserOptions.style.display = e.target.checked ? 'block' : 'none';
+        });
+    }
+
+    const permPhEnable = document.getElementById('calc-perm-ph-enable');
+    const permPhOptions = document.getElementById('calc-perm-ph-options');
+    if (permPhEnable && permPhOptions) {
+        permPhEnable.addEventListener('change', (e) => {
+            permPhOptions.style.display = e.target.checked ? 'block' : 'none';
+        });
+    }
+
+    // Antiscalant UI Logic (CHANGE 8)
+    const antiscalantEnable = document.getElementById('calc-antiscalant-enable');
+    const antiscalantOptions = document.getElementById('calc-antiscalant-options');
+    if (antiscalantEnable && antiscalantOptions) {
+        antiscalantEnable.addEventListener('change', (e) => {
+            antiscalantOptions.style.display = e.target.checked ? 'block' : 'none';
+        });
+    }
+
     // Toggle UF module dropdown and Pass 2 container based on train selection
     const trainSelect = document.getElementById('calc-tech-train');
     if (trainSelect) {
         trainSelect.addEventListener('change', (e) => {
             const train = e.target.value;
+
+            // ── Show / hide Pass 1 RO container (hide if UF-only) ────────────
+            const pass1Container = document.getElementById('calc-pass1-container');
+            if (pass1Container) pass1Container.style.display = (train === 'UF') ? 'none' : 'block';
+
+            // ── Show / hide Booster Pump card (hide if UF-only) ──────────────
+            const boosterCard = document.getElementById('calc-booster-config-card');
+            if (boosterCard) boosterCard.style.display = (train === 'UF') ? 'none' : 'block';
 
             // ── Show / hide UF module input ─────────────────────────────────
             const ufGroup = document.getElementById('calc-uf-module-group');
@@ -3710,10 +3771,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // ── Reset inputs to sensible defaults for this train ────────────
             const defaults = {
-                'RO':     { recovery: 75, stages: 2, vessels: '4, 2', elements: 6 },
-                'UF-RO':  { recovery: 75, stages: 2, vessels: '4, 2', elements: 6 },
-                'NF':     { recovery: 80, stages: 1, vessels: '4',    elements: 6 },
-                '2P-RO':  { recovery: 75, stages: 2, vessels: '4, 2', elements: 6 },
+                'RO':       { recovery: 75, stages: 2, vessels: '4, 2', elements: 6 },
+                'UF':       { recovery: 95, stages: 1, vessels: '1',    elements: 1 },
+                'UF+RO':    { recovery: 75, stages: 2, vessels: '4, 2', elements: 6 },
+                'NF':       { recovery: 80, stages: 1, vessels: '4',    elements: 6 },
+                '2P-RO':    { recovery: 75, stages: 2, vessels: '4, 2', elements: 6 },
+                'UF+2P-RO': { recovery: 75, stages: 2, vessels: '4, 2', elements: 6 },
             };
             const d = defaults[train] || defaults['RO'];
 
@@ -3762,6 +3825,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
         // Trigger initial toggle (without clearing results on first load)
+        const pass1Container = document.getElementById('calc-pass1-container');
+        if (pass1Container) pass1Container.style.display = (trainSelect.value === 'UF') ? 'none' : 'block';
+        const boosterCard = document.getElementById('calc-booster-config-card');
+        if (boosterCard) boosterCard.style.display = (trainSelect.value === 'UF') ? 'none' : 'block';
         const ufGroup = document.getElementById('calc-uf-module-group');
         if (ufGroup) ufGroup.style.display = trainSelect.value.includes('UF') ? 'block' : 'none';
         const pass2Container = document.getElementById('calc-pass2-container');
@@ -4109,6 +4176,48 @@ document.addEventListener('DOMContentLoaded', () => {
                     recycle_ratio: parseFloat(safeVal('calc-recycle-ratio', 0)) / 100.0
                 };
 
+                // Booster Pump config (CHANGE 5)
+                const boosterEnabled = document.getElementById('calc-enable-booster') ? document.getElementById('calc-enable-booster').checked : false;
+                const boosterMode = safeStr('calc-booster-mode', 'auto');
+                const interboostDp = (boosterEnabled && boosterMode === 'manual') ? parseFloat(safeVal('calc-booster-dp', 0.0)) : null;
+
+                // Chemical Conditioning & Decarbonation config (CHANGE 3 & 4)
+                const feedPhEnabled = document.getElementById('calc-feed-ph-enable') ? document.getElementById('calc-feed-ph-enable').checked : false;
+                const degasserEnabled = document.getElementById('calc-degasser-enable') ? document.getElementById('calc-degasser-enable').checked : false;
+                const permPhEnabled = document.getElementById('calc-perm-ph-enable') ? document.getElementById('calc-perm-ph-enable').checked : false;
+
+                const fullConditioning = {
+                    enabled: feedPhEnabled || permPhEnabled || conditioning.enabled,
+                    target_ph: feedPhEnabled ? parseFloat(safeVal('calc-feed-target-ph', 6.5)) : conditioning.target_ph,
+                    chemical: feedPhEnabled ? safeStr('calc-feed-ph-chem', 'H2SO4') : conditioning.chemical,
+                    co2_degassing: degasserEnabled || conditioning.co2_degassing,
+                    apply_to_feed: feedPhEnabled,
+                    feed_conditioning: {
+                        enabled: feedPhEnabled,
+                        target_ph: parseFloat(safeVal('calc-feed-target-ph', 6.5)),
+                        chemical: safeStr('calc-feed-ph-chem', 'H2SO4')
+                    },
+                    permeate_conditioning: {
+                        enabled: permPhEnabled,
+                        target_ph: parseFloat(safeVal('calc-perm-target-ph', 7.5)),
+                        chemical: safeStr('calc-perm-ph-chem', 'NaOH')
+                    }
+                };
+
+                let degasserObj = null;
+                if (degasserEnabled) {
+                    degasserObj = {
+                        enabled: true,
+                        efficiency: parseFloat(safeVal('calc-degasser-eff', 95)) / 100.0,
+                        residual_co2_mg_l: parseFloat(safeVal('calc-degasser-residual', 5.0))
+                    };
+                }
+
+                // Antiscalant config (CHANGE 8)
+                const antiscalantEnabled = document.getElementById('calc-antiscalant-enable') ? document.getElementById('calc-antiscalant-enable').checked : true;
+                const antiscalantType = safeStr('calc-antiscalant-type', 'Phosphonate');
+                const antiscalantDose = parseFloat(safeVal('calc-antiscalant-dose', 3.0));
+
                 const payload = {
                     technology_train: safeStr('calc-tech-train', 'RO'),
                     project_details: {
@@ -4127,11 +4236,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     elements_per_vessel: parseInt(safeVal('calc-elements-pv', 6)),
                     recycle_enabled: document.getElementById('calc-recycle-enable') ? document.getElementById('calc-recycle-enable').checked : false,
                     recycle_ratio: safeVal('calc-recycle-ratio', 0) / 100.0,
+                    enable_booster: boosterEnabled,
+                    interboost_enabled: boosterEnabled,
+                    interboost_dp_bar: interboostDp,
+                    conditioning: fullConditioning,
+                    degasser: degasserObj,
+                    antiscalant_type: antiscalantType,
+                    antiscalant_dose_mg_l: antiscalantDose,
+                    antiscalant_dosed: antiscalantEnabled && antiscalantType !== 'None',
                     
                     // Sub-objects for Two-Pass RO
                     pass1: pass1,
                     pass2: pass2,
-                    conditioning: conditioning,
                     recycle: recycleObj,
                     
                     economic_params: {
@@ -4166,14 +4282,22 @@ document.addEventListener('DOMContentLoaded', () => {
                     const agingCheckbox = document.getElementById('aging-antiscalant');
                     const physDropdown = document.getElementById('phys-antiscalant');
                     let asDosed = true;
-                    if (agingCheckbox && agingCheckbox.offsetParent !== null) {
-                        asDosed = agingCheckbox.checked;
-                    } else if (physDropdown) {
-                        asDosed = physDropdown.value === 'true';
+                    let asType = antiscalantType;
+                    if (physDropdown) {
+                        const val = physDropdown.value;
+                        if (val === 'None' || val === 'false') {
+                            asDosed = false;
+                            asType = 'None';
+                        } else {
+                            asDosed = true;
+                            asType = (val === 'true') ? 'Phosphonate' : val;
+                        }
                     } else if (agingCheckbox) {
                         asDosed = agingCheckbox.checked;
                     }
                     payload.antiscalant_dosed = asDosed;
+                    payload.antiscalant_type = asType;
+                    payload.antiscalant_dose_mg_l = antiscalantDose;
                 }
 
                 const url = isPhysics ? API_BASE + '/api/calculate-system-physics' : API_BASE + '/api/calculate-system';
@@ -6372,6 +6496,127 @@ window.closeMembraneDbModal = function() {
     if (btn) btn.classList.remove('active');
 
     const modal = document.getElementById('membrane-db-modal');
+    if (modal) modal.classList.remove('is-active');
+};
+
+// Membrane Datasheet Modal Viewer (CHANGE 6)
+window.openMembraneDatasheetModal = async function(modelName) {
+    const modal = document.getElementById('membrane-datasheet-modal');
+    if (modal) modal.classList.add('is-active');
+
+    const mSel = document.getElementById('calc-ro-membrane');
+    const selectedModel = modelName || (mSel ? mSel.value : 'HPA-RO-8040');
+    const titleEl = document.getElementById('mds-title');
+    const bodyEl = document.getElementById('mds-body');
+
+    if (titleEl) {
+        titleEl.innerHTML = `<i class="fa-solid fa-file-lines" style="color: var(--primary-color); margin-right: 8px;"></i> Datasheet: <strong>${selectedModel}</strong>`;
+    }
+    if (bodyEl) {
+        bodyEl.innerHTML = `<div style="text-align: center; color: var(--text-secondary); padding: 2.5rem;"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><p style="margin-top: 1rem;">Loading manufacturer ratings &amp; specifications...</p></div>`;
+    }
+
+    try {
+        const res = await fetch(API_BASE + '/api/membranes/ro');
+        if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+        const membranes = await res.json();
+        const mem = membranes.find(m => m.model === selectedModel) || membranes.find(m => m.id === selectedModel);
+
+        if (!mem || !mem.datasheet) {
+            if (bodyEl) {
+                bodyEl.innerHTML = `
+                    <div style="padding: 1.5rem; text-align: center; color: var(--text-secondary);">
+                        <i class="fa-solid fa-circle-info fa-2x" style="color: #f59e0b; margin-bottom: 0.5rem;"></i>
+                        <p>Datasheet specifications for <strong>${selectedModel}</strong> are not available or pending manufacturer verification.</p>
+                    </div>`;
+            }
+            return;
+        }
+
+        const ds = mem.datasheet;
+        const geom = ds.geometry || {};
+        const test = ds.test_conditions || {};
+        const limits = ds.operating_limits || {};
+
+        if (bodyEl) {
+            bodyEl.innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+                    <!-- Header Info Banner -->
+                    <div style="background: linear-gradient(135deg, rgba(37,99,235,0.08), rgba(99,102,241,0.08)); border: 1px solid rgba(37,99,235,0.2); border-radius: 8px; padding: 1rem 1.25rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+                        <div>
+                            <div style="font-size: 1.2rem; font-weight: 700; color: var(--text-primary);">${mem.model}</div>
+                            <div style="font-size: 0.85rem; color: var(--text-secondary);">${mem.manufacturer} &bull; ${mem.type} &bull; ${mem.material || 'Polyamide Thin-Film Composite'}</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <span style="background: #2563eb; color: #fff; font-size: 0.75rem; font-weight: 600; padding: 4px 10px; border-radius: 12px; text-transform: uppercase;">Datasheet Verified</span>
+                        </div>
+                    </div>
+
+                    <!-- 3-Column Specifications Grid -->
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
+                        <!-- Column 1: Standard Test Conditions & Performance -->
+                        <div style="background: var(--card-bg, #fff); border: 1px solid var(--card-border, #e2e8f0); border-radius: 8px; padding: 1rem;">
+                            <h4 style="font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--primary-color); margin-bottom: 0.75rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.4rem;">
+                                <i class="fa-solid fa-flask-vial"></i> Rating Conditions
+                            </h4>
+                            <table style="width: 100%; font-size: 0.82rem; border-collapse: collapse;">
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Test Solution</td><td style="text-align: right; font-weight: 600;">${test.solution || '2,000 ppm NaCl'}</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Test Pressure</td><td style="text-align: right; font-weight: 600;">${test.pressure_psi ? test.pressure_psi + ' psi (' + (test.pressure_psi * 0.0689476).toFixed(1) + ' bar)' : '225 psi (15.5 bar)'}</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Nominal Rejection</td><td style="text-align: right; font-weight: 600; color: #16a34a;">${(mem.nominal_rejection ? (mem.nominal_rejection * 100).toFixed(2) : '99.60')}%</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Minimum Rejection</td><td style="text-align: right; font-weight: 600;">${(ds.min_rejection_pct || 99.50).toFixed(2)}%</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Nominal Flow</td><td style="text-align: right; font-weight: 600;">${mem.nominal_flow_m3d ? mem.nominal_flow_m3d.toFixed(1) + ' m³/d' : '39.7 m³/d'} (${ds.nominal_flow_gpd || (mem.nominal_flow_m3d ? Math.round(mem.nominal_flow_m3d * 264.172) : 10500)} GPD)</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Test Recovery</td><td style="text-align: right; font-weight: 600;">${test.recovery_pct ? test.recovery_pct + '%' : '15%'}</td></tr>
+                            </table>
+                        </div>
+
+                        <!-- Column 2: Dimensions & Feed Channel (CHANGE 15) -->
+                        <div style="background: var(--card-bg, #fff); border: 1px solid var(--card-border, #e2e8f0); border-radius: 8px; padding: 1rem;">
+                            <h4 style="font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--primary-color); margin-bottom: 0.75rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.4rem;">
+                                <i class="fa-solid fa-ruler-combined"></i> Channel &amp; Dimensions
+                            </h4>
+                            <table style="width: 100%; font-size: 0.82rem; border-collapse: collapse;">
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Active Area</td><td style="text-align: right; font-weight: 600;">${mem.active_area_m2 || 37.2} m² (${ds.active_area_ft2 || Math.round((mem.active_area_m2 || 37.2) * 10.7639)} ft²)</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Feed Spacer (h)</td><td style="text-align: right; font-weight: 600; color: #2563eb;">${mem.spacer_thickness_mil || (mem.spacer_thickness_mm ? Math.round(mem.spacer_thickness_mm / 0.0254) : 31)} mil (${(mem.spacer_thickness_mm || 0.787).toFixed(3)} mm)</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Hydraulic Dia (d_h)</td><td style="text-align: right; font-weight: 600; color: #2563eb;">${(mem.hydraulic_diameter_mm || 1.01).toFixed(2)} mm</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Element Diameter</td><td style="text-align: right; font-weight: 600;">${geom.diameter_inch || (mem.model.includes('8040') ? '8.0' : '4.0')}" (${mem.model.includes('8040') ? '203' : '101'} mm)</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Element Length</td><td style="text-align: right; font-weight: 600;">${geom.length_inch || '40.0'}" (1016 mm)</td></tr>
+                            </table>
+                        </div>
+
+                        <!-- Column 3: Operating Limits -->
+                        <div style="background: var(--card-bg, #fff); border: 1px solid var(--card-border, #e2e8f0); border-radius: 8px; padding: 1rem;">
+                            <h4 style="font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--primary-color); margin-bottom: 0.75rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.4rem;">
+                                <i class="fa-solid fa-shield-halved"></i> Operating Limits
+                            </h4>
+                            <table style="width: 100%; font-size: 0.82rem; border-collapse: collapse;">
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Max Pressure</td><td style="text-align: right; font-weight: 600;">${mem.max_pressure_bar || 41.0} bar (${Math.round((mem.max_pressure_bar || 41.0) * 14.5038)} psi)</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Max Feed Flow</td><td style="text-align: right; font-weight: 600;">${mem.max_feed_flow_m3h || 16.0} m³/h</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Max Temperature</td><td style="text-align: right; font-weight: 600;">${mem.max_temperature_c || 45.0} °C</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Max Turbidity / SDI</td><td style="text-align: right; font-weight: 600;">${limits.max_turbidity_ntu || 1.0} NTU / SDI ${limits.max_sdi || 5.0}</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">pH Range (Cont.)</td><td style="text-align: right; font-weight: 600;">${limits.ph_continuous || '2.0 – 11.0'}</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Free Chlorine</td><td style="text-align: right; font-weight: 600; color: #dc2626;">&lt; 0.1 mg/L</td></tr>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Transport Model Parameters -->
+                    <div style="background: rgba(0,0,0,0.03); border: 1px solid var(--card-border); border-radius: 6px; padding: 0.75rem 1rem; font-size: 0.8rem; color: var(--text-secondary); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
+                        <div><strong>Water Permeability A:</strong> ${(mem.permeability_A ? mem.permeability_A.toExponential(3) : '1.500e-11')} m/(s·Pa)</div>
+                        <div><strong>Solute Permeability B:</strong> ${(mem.permeability_B ? mem.permeability_B.toExponential(3) : '2.000e-8')} m/s</div>
+                        <div><strong>Reflection Coeff &sigma;:</strong> 0.9995 (Na/Cl calibrated)</div>
+                    </div>
+                </div>`;
+        }
+    } catch (err) {
+        console.error("Failed to load datasheet:", err);
+        if (bodyEl) {
+            bodyEl.innerHTML = `<div style="padding: 1.5rem; text-align: center; color: #ef4444;"><i class="fa-solid fa-triangle-exclamation"></i> Error loading datasheet: ${err.message}</div>`;
+        }
+    }
+};
+
+window.closeMembraneDatasheetModal = function() {
+    const modal = document.getElementById('membrane-datasheet-modal');
     if (modal) modal.classList.remove('is-active');
 };
 

@@ -615,7 +615,12 @@ def generate_calc_report(data: SystemCalcInput):
             script = f"from docx2pdf import convert; convert(r'{tmp_docx.name}', r'{tmp_pdf}')"
             res = subprocess.run(["python", "-c", script], capture_output=True, text=True)
             if res.returncode != 0:
-                raise Exception(f"Windows PDF conversion failed: {res.stderr}")
+                print(f"[WARN] Word COM PDF conversion failed: {res.stderr.strip()}. Serving docx directly.")
+                return FileResponse(
+                    path=tmp_docx.name,
+                    filename="PACE_Calculation_Report.docx",
+                    media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
         else:
             # Production Linux Docker environment using LibreOffice
             res = subprocess.run(["libreoffice", "--headless", "--convert-to", "pdf", "--outdir", temp_dir, tmp_docx.name], capture_output=True, text=True)
@@ -810,6 +815,7 @@ def _run_projection_core(
     antiscalant_dosed: bool,
     recycle_enabled: bool = False,
     recycle_ratio: float = 0.0,
+    antiscalant_type: str = "Phosphonate",
     # Sub-configuration objects — forwarded verbatim to the simulation engine
     # so that 2P-RO, UF+RO, NF, and any future train uses the correct config.
     pass1:        Optional[dict] = None,
@@ -1004,7 +1010,7 @@ def _run_projection_core(
         conc_ions = baseline_ro.get("summary", {}).get("conc_ions", {})
         if conc_ions:
             import math
-            feed_hco3 = data.feed_water.bicarbonate
+            feed_hco3 = feed.get("bicarbonate", 0.0) if isinstance(feed, dict) else getattr(feed, "bicarbonate", 0.0)
             conc_hco3 = conc_ions.get("HCO3", 0)
             
             est_conc_ph = ph
@@ -1086,7 +1092,7 @@ def _run_projection_core(
         antiscalant_dosed   = antiscalant_dosed,
         recycle_feed_ions   = recycle_feed_ions,
         bulk_si             = bulk_si,
-        antiscalant_type    = getattr(data, "antiscalant_type", "Phosphonate"),
+        antiscalant_type    = antiscalant_type,
     )
 
     # Ensure physics engine snapshots reflect the TRUE system recovery/flow (vital for 2P-RO)
@@ -1207,6 +1213,7 @@ def simulate_aging(data: AgingSimInput):
             cl2_residual_mg_l   = feed_hist.get("cl2_residual_mg_l", 0.0),
             cip_interval_months = cip_interval_months,
             antiscalant_dosed   = aging_cfg.get("antiscalant_dosed", True),
+            antiscalant_type    = aging_cfg.get("antiscalant_type", "Phosphonate"),
         )
 
         result = core["physics_results"]
@@ -1266,6 +1273,7 @@ def calculate_system_physics(data: PhysicsCalcInput):
             cl2_residual_mg_l   = fq.cl2_residual_mg_l,
             cip_interval_months = cip_interval_months,
             antiscalant_dosed   = data.antiscalant_dosed,
+            antiscalant_type    = getattr(data, "antiscalant_type", "Phosphonate"),
             recycle_enabled     = data.recycle_enabled or False,
             recycle_ratio       = data.recycle_ratio or 0.0,
             # Sub-configs forwarded verbatim — guarantees all technology trains
