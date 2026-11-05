@@ -205,7 +205,7 @@ class AgingEngine:
         sdi_s2_factor = model_params.get("sdi_stage2_factor", DEFAULT_MODEL_PARAMS["sdi_stage2_factor"])
 
         # Spacer geometry
-        spacer_mil = membrane.get("feed_spacer_mil", 34)
+        spacer_mil = membrane.get("feed_spacer_mil", 31)
         t_fs = spacer_mil * 2.54e-5  # m
         area_m2 = membrane.get("active_area_m2", 37.2)
         length_m = membrane.get("length_m", 1.016)
@@ -565,9 +565,10 @@ class AgingEngine:
         """
         A0 = membrane.get("permeability_A", 3.213)
         B0 = membrane.get("permeability_B", 3.72e-8)
-        spacer_mil = membrane.get("feed_spacer_mil", 34)
+        spacer_mil = membrane.get("feed_spacer_mil", 31)
         t_fs = spacer_mil * 2.54e-5  # spacer thickness in meters
-        dh_clean = 2.0 * t_fs
+        epsilon = 0.90
+        dh_clean = (4.0 * epsilon) / ((2.0 / t_fs) + ((1.0 - epsilon) * 8.0 / t_fs))
 
         max_theta = model_params.get("max_theta", DEFAULT_MODEL_PARAMS["max_theta"])
         r_sp_cake = model_params.get("r_sp_cake", DEFAULT_MODEL_PARAMS["r_sp_cake"])
