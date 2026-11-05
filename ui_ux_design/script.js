@@ -1434,6 +1434,7 @@ async function runPhreeqcCalculation() {
     const iron = parseFloat(document.getElementById('fe').value) || 0;
     const manganese = parseFloat(document.getElementById('mn').value) || 0;
     const phosphate = parseFloat(document.getElementById('po4').value) || 0;
+    const boron = parseFloat((document.getElementById('b') || document.getElementById('boron') || {}).value) || 0;
     
     const payload = {
         temperature: temp,
@@ -1455,7 +1456,8 @@ async function runPhreeqcCalculation() {
         aluminium: aluminium,
         iron: iron,
         manganese: manganese,
-        phosphate: phosphate
+        phosphate: phosphate,
+        boron: boron
     };
 
     try {
@@ -2317,12 +2319,17 @@ function validatePhysicalParameters() {
     }
 
     // Recovery validation
-    const recovery = parseFloat(document.getElementById('recovery').value);
+    const recoveryInput = document.getElementById('recovery');
+    const recovery = parseFloat(recoveryInput.value);
     if (!isNaN(recovery)) {
-        if (recovery <= 0 || recovery > 100) {
-            setMsg('msg-recovery', 'Invalid recovery target', 'warn');
+        if (recovery <= 0) {
+            recoveryInput.value = 5;
+            setMsg('msg-recovery', 'Recovery must be > 0%', 'err');
+        } else if (recovery > 100) {
+            recoveryInput.value = 100;
+            setMsg('msg-recovery', 'Recovery cannot exceed 100%', 'err');
         } else if (recovery > 80) {
-            setMsg('msg-recovery', 'High recovery (scaling risk)', 'warn');
+            setMsg('msg-recovery', 'High recovery (>80%: scaling risk)', 'warn');
         } else {
             setMsg('msg-recovery', 'OK', 'success');
         }
@@ -2406,12 +2413,14 @@ function calculateChemistry(showAllResults = false) {
     });
 
 
-    // Add additional fouling indicators that act as solutes (Aluminium, Iron, Manganese)
+    // Add additional solutes (Al, Fe, Mn, SiO2, Boron) to calculated TDS (CHANGE 14)
     const alVal = parseFloat((document.getElementById('al') || {}).value) || 0;
     const feVal = parseFloat(document.getElementById('fe').value) || 0;
     const mnVal = parseFloat(document.getElementById('mn').value) || 0;
+    const sio2Val = parseFloat(document.getElementById('sio2').value) || 0;
+    const boronVal = parseFloat((document.getElementById('b') || document.getElementById('boron') || {}).value) || 0;
     
-    calculatedTds += alVal + feVal + mnVal;
+    calculatedTds += alVal + feVal + mnVal + sio2Val + boronVal;
 
     // Update Silica row displays (neutral species)
     const sio2MeqEl = document.getElementById('sio2-meq');
@@ -2419,8 +2428,8 @@ function calculateChemistry(showAllResults = false) {
     if (sio2MeqEl) sio2MeqEl.textContent = '0.0000';
     if (sio2Caco3El) sio2Caco3El.textContent = '0.00';
 
-    // Update Table Totals Live (Including trace metals in mg/L total)
-    const grandTotalMg = totalCatMg + totalAnMg + alVal + feVal + mnVal;
+    // Update Table Totals Live (Including trace metals and neutral species in mg/L total)
+    const grandTotalMg = totalCatMg + totalAnMg + alVal + feVal + mnVal + sio2Val + boronVal;
     const grandTotalMeq = totalCatMeq + totalAnMeq;
     const grandTotalCaCO3 = totalCatCaCO3 + totalAnCaCO3;
 
@@ -2458,6 +2467,8 @@ function calculateChemistry(showAllResults = false) {
     sumCi += al / (26.98 * 1000);   // Al MW
     sumCi += mn / (54.938 * 1000);  // Mn MW
     sumCi += sio2Val / (60.08 * 1000); // SiO2 MW
+    const boronVal = parseFloat((document.getElementById('b') || document.getElementById('boron') || {}).value) || 0;
+    sumCi += boronVal / (10.81 * 1000); // Boron MW 10.81
 
     // Get osmotic coefficient based on selected water type
     const phi = getOsmoticCoefficient();

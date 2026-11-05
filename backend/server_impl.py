@@ -206,6 +206,13 @@ class SystemCalcInput(BaseModel):
     economic_params: Optional[EconomicParams] = None
     recycle_enabled: Optional[bool] = False
     recycle_ratio: Optional[float] = 0.0
+    permeate_pressure_bar: Optional[float] = 0.0
+    enable_booster: Optional[bool] = False
+    interboost_enabled: Optional[bool] = False
+    interboost_dp_bar: Optional[float] = None
+    degasser: Optional[dict] = None
+    antiscalant_type: Optional[str] = "Phosphonate"
+    antiscalant_dose_mg_l: Optional[float] = 3.0
     pass1: Optional[PassConfig] = None
     pass2: Optional[PassConfig] = None
     conditioning: Optional[ConditioningConfig] = None
@@ -246,7 +253,8 @@ def calculate_scaling(data: FeedWaterData):
             'Al': data.aluminium,
             'Fe': data.iron,
             'Mn': data.manganese,
-            'P': f"{data.phosphate} as PO4"
+            'P': f"{data.phosphate} as PO4",
+            'B': data.boron
         })
         
         # Retrieve saturation indices (SI)
@@ -664,6 +672,13 @@ class PhysicsCalcInput(BaseModel):
     economic_params: Optional[EconomicParams] = None
     recycle_enabled: Optional[bool] = False
     recycle_ratio: Optional[float] = 0.0
+    permeate_pressure_bar: Optional[float] = 0.0
+    enable_booster: Optional[bool] = False
+    interboost_enabled: Optional[bool] = False
+    interboost_dp_bar: Optional[float] = None
+    degasser: Optional[dict] = None
+    antiscalant_type: Optional[str] = "Phosphonate"
+    antiscalant_dose_mg_l: Optional[float] = 3.0
     pass1: Optional[PassConfig] = None
     pass2: Optional[PassConfig] = None
     conditioning: Optional[ConditioningConfig] = None
@@ -910,7 +925,8 @@ def _run_projection_core(
                 'Al': conc_ions.get("Al", 0),
                 'Fe': conc_ions.get("Fe", 0),
                 'Mn': conc_ions.get("Mn", 0),
-                'P': f"{conc_ions.get('PO4', 0)} as PO4"
+                'P': f"{conc_ions.get('PO4', 0)} as PO4",
+                'B': conc_ions.get("B", 0),
             })
             bulk_si = {
                 "calcite": sol.si("Calcite"),
@@ -943,6 +959,7 @@ def _run_projection_core(
         antiscalant_dosed   = antiscalant_dosed,
         recycle_feed_ions   = recycle_feed_ions,
         bulk_si             = bulk_si,
+        antiscalant_type    = getattr(data, "antiscalant_type", "Phosphonate"),
     )
 
     # Auto-CIP forecast logic removed per user request.

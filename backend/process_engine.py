@@ -250,7 +250,8 @@ class ProcessRecommendationEngine:
             'Si': f"{(d.sio2 or 0) * cf} as SiO2",
             'N(-3)': f"{(d.nh4 or 0) * cf} as NH4",
             'N(5)': f"{(d.no3 or 0) * cf} as NO3",
-            'P': f"{(d.po4 or 0) * cf} as PO4"
+            'P': f"{(d.po4 or 0) * cf} as PO4",
+            'B': (d.boron or 0) * cf
         })
         
         res = {
@@ -304,18 +305,33 @@ class ProcessRecommendationEngine:
     def _phase_4_scaling(self):
         target = self.data.target_recovery
         
-        cf = 1 / (1 - target / 100)
-        sis = self._run_phreeqc_cf(cf)
-        risks, has_crit, limiting = self._eval_scaling(sis)
-            
-        self.state["scaling_risks"] = risks
-        
+        # First evaluate at target recovery
+        cf_target = 1.0 / max(0.01, 1.0 - target / 100.0)
+        target_sis = self._run_phreeqc_cf(cf_target)
+        target_risks, has_crit, limiting = self._eval_scaling(target_sis)
+        self.state["scaling_risks"] = target_risks
+
         if has_crit:
-            self._add_flag(f"CRITICAL {limiting} scaling detected at {target}% target recovery. Recovery may not be feasible.")
+            # Loop downwards to find max recovery without CRITICAL risk
+            max_safe_rec = 50.0
+            for r in range(int(target) - 5, 45, -5):
+                cf = 1.0 / max(0.01, 1.0 - r / 100.0)
+                sis = self._run_phreeqc_cf(cf)
+                _, crit, _ = self._eval_scaling(sis)
+                if not crit:
+                    max_safe_rec = float(r)
+                    break
+
+            self.state["max_scaling_free_recovery"] = max_safe_rec
+            self.state["recommended_recovery"] = max_safe_rec
+            self._add_flag(f"CRITICAL {limiting} scaling detected at {target}% target recovery. Recovery may not be feasible. Recommended safe recovery: {max_safe_rec}%.")
             
             if limiting == "SiO2(a)":
                 self.state["high_ph_ro_hint"] = True
                 self._add_flag("High pH RO configuration hinted: critical silica scaling detected.")
+        else:
+            self.state["max_scaling_free_recovery"] = target
+            self.state["recommended_recovery"] = target
 
     def _phase_5_permeate_quality(self):
         tds = self.data.feed_tds
