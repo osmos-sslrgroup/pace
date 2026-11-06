@@ -320,7 +320,22 @@ class SystemEngine:
             if perm_cond_cfg.get("enabled", False) or perm_degas_cfg.get("enabled", False):
                 from conditioning import apply_conditioning
                 raw_perm_ions = ro_res["summary"].get("perm_ions", {}).copy()
-                raw_perm_ions["pH"] = ro_res["summary"].get("perm_ph") or feed.get("ph", 7.0)
+                
+                # Estimate permeate pH from rejected bicarbonate equilibrium if not present
+                perm_ph = ro_res["summary"].get("perm_ph")
+                if perm_ph is None:
+                    feed_ph = feed.get("ph", 7.0)
+                    feed_hco3 = feed.get("bicarbonate", 0.0) or feed_ions.get("HCO3", 0.0)
+                    perm_hco3 = raw_perm_ions.get("HCO3", 0.0)
+                    if feed_hco3 > 0 and perm_hco3 > 0:
+                        import math
+                        ratio = max(perm_hco3 / feed_hco3, 1e-4)
+                        perm_ph = round(min(max(feed_ph + math.log10(ratio), 4.5), 8.5), 2)
+                    else:
+                        perm_ph = round(max(4.5, feed_ph - 1.5), 2)
+                    ro_res["summary"]["perm_ph"] = perm_ph
+                
+                raw_perm_ions["pH"] = perm_ph
                 conditioned_perm_ions, perm_dose, cond_perm_ph = apply_conditioning(raw_perm_ions, perm_cond_cfg, perm_degas_cfg)
                 conditioned_perm_ions.pop("pH", None)
                 ro_res["summary"]["conditioned_perm_ions"] = conditioned_perm_ions
@@ -884,7 +899,19 @@ class SystemEngine:
             p1_perm_flow = p1_res["summary"]["perm_flow"]
             p1_perm_ions = p1_res["summary"]["perm_ions"]
             
-            p1_perm_ph = p1_res["summary"].get("perm_ph") or feed.get("ph", 7.0)
+            p1_perm_ph = p1_res["summary"].get("perm_ph")
+            if p1_perm_ph is None:
+                feed_ph = feed.get("ph", 7.0)
+                feed_hco3 = feed.get("bicarbonate", 0.0) or ions.get("HCO3", 0.0)
+                perm_hco3 = p1_perm_ions.get("HCO3", 0.0)
+                if feed_hco3 > 0 and perm_hco3 > 0:
+                    import math
+                    ratio = max(perm_hco3 / feed_hco3, 1e-4)
+                    p1_perm_ph = round(min(max(feed_ph + math.log10(ratio), 4.5), 8.5), 2)
+                else:
+                    p1_perm_ph = round(max(4.5, feed_ph - 1.5), 2)
+                p1_res["summary"]["perm_ph"] = p1_perm_ph
+
             p1_perm_ions["pH"] = p1_perm_ph
             p2_feed_ions, cond_dose, cond_ph = apply_conditioning(p1_perm_ions, cond_cfg)
             p2_feed_ions.pop("pH", None)

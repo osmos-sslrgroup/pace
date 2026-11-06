@@ -419,6 +419,9 @@ def _chart_capex_pie(capex, figsize=(4.0, 3.0)):
     ]
     if sum(vals) <= 0:
         return None
+    # Omit pie chart when standalone-UF has positive membrane cost but lacks itemized equipment breakdown
+    if capex.get('uf_membranes_inr', 0) > 0 and sum(vals[1:]) == 0:
+        return None
     colors = [CHART_BRAND, CHART_BLUE, CHART_ORANGE, CHART_GRAY, '#9C27B0']
     fig, ax = plt.subplots(figsize=figsize)
     wedges, texts, autotexts = ax.pie(
@@ -1089,8 +1092,13 @@ class ReportGenerator:
         conc_tds = sm.get('conc_tds', 0)
         rej_tds  = (1 - perm_tds / feed_tds) * 100 if feed_tds > 0 else 100.0
 
+        # Conductivity is calculated from dissolved ionic salts only (excluding neutral SiO2 and B)
+        feed_ionic = sum(fw.get(key, 0.0) for ion, key in ion_map.items() if ion not in ('SiO2', 'B'))
+        conc_ionic = sum(conc_ions.get(ion, 0.0) for ion in ion_map.keys() if ion not in ('SiO2', 'B'))
+        perm_ionic = sum(perm_ions.get(ion, 0.0) for ion in ion_map.keys() if ion not in ('SiO2', 'B'))
+
         ion_rows.append(['TDS* (mg/L)',      f'{feed_tds:.1f}', f'{conc_tds:.1f}',  f'{perm_tds:.2f}',   f'{rej_tds:.2f} %'])
-        ion_rows.append(['Conductivity (µS/cm)', f'{feed_tds*2.02:.0f}', f'{conc_tds*2.02:.0f}', f'{perm_tds*2.02:.1f}', '—'])
+        ion_rows.append(['Conductivity (µS/cm)', f'{feed_ionic*2.02:.0f}', f'{conc_ionic*2.02:.0f}', f'{perm_ionic*2.02:.1f}', '—'])
 
         _data_table(doc,
             [['Ion Species', 'Feed (mg/L)', 'Concentrate (mg/L)', 'Permeate (mg/L)', 'Rejection (%)']],
@@ -1245,12 +1253,16 @@ class ReportGenerator:
 
         _heading(doc, 'RO Chemical Adjustments (Pass 1 Feed vs Concentrate)')
         sm = ro_results.get('summary', {})
+        feed_ions = ro_results.get('feed_ions', {})
+        conc_ions = sm.get('conc_ions', {})
+        feed_ionic = sum(v for k, v in feed_ions.items() if k not in ('SiO2', 'B', 'CO2')) if feed_ions else max(0.0, sm.get('feed_tds', 0) - feed_ions.get('SiO2', 0))
+        conc_ionic = sum(v for k, v in conc_ions.items() if k not in ('SiO2', 'B', 'CO2')) if conc_ions else max(0.0, sm.get('conc_tds', 0) - conc_ions.get('SiO2', 0))
         _data_table(doc,
             [['Parameter', 'Pass 1 Feed', 'RO 1st Pass Conc.']],
             [
                 ['pH',                          f"{ro_results.get('feed_ph', 7.0):.1f}",  '—'],
                 ['TDS* (mg/L)',                 f"{sm.get('feed_tds', 0):.1f}", f"{sm.get('conc_tds', 0):.0f}"],
-                ['Conductivity (µS/cm)',        f"{sm.get('feed_tds', 0)*2.02:.0f}", f"{sm.get('conc_tds', 0)*2.02:.0f}"],
+                ['Conductivity (µS/cm)',        f"{feed_ionic*2.02:.0f}", f"{conc_ionic*2.02:.0f}"],
                 ['CaSO₄ (% saturation)',        '—', '—'],
                 ['BaSO₄ (% saturation)',        '—', '—'],
                 ['SrSO₄ (% saturation)',        '—', '—'],
@@ -1299,10 +1311,14 @@ class ReportGenerator:
             ['Annual Operating Hours',       f"{opex.get('annual_hours', 0):,.0f} hrs"],
             ['Electricity / Energy Cost',    f"₹ {opex.get('energy_cost_pa_inr', 0):,.0f}"],
         ]
-        if opex.get('membrane_repl_pa_inr', 0) > 0:
+        has_ro_repl = opex.get('membrane_repl_pa_inr', 0) > 0
+        has_uf_repl = opex.get('uf_mem_repl_pa_inr', 0) > 0
+        if has_ro_repl:
             opex_rows.append(['RO Membrane Replacement', f"₹ {opex.get('membrane_repl_pa_inr', 0):,.0f}"])
-        elif opex.get('uf_mem_repl_pa_inr', 0) > 0:
+        if has_uf_repl:
             opex_rows.append(['UF Membrane Replacement', f"₹ {opex.get('uf_mem_repl_pa_inr', 0):,.0f}"])
+        if not has_ro_repl and not has_uf_repl and opex.get('membranes_repl_pa_inr', 0) > 0:
+            opex_rows.append(['Membrane Replacement', f"₹ {opex.get('membranes_repl_pa_inr', 0):,.0f}"])
         if opex.get('antiscalant_cost_pa_inr', 0) > 0:
             opex_rows.append(['Antiscalant Chemical Dosing', f"₹ {opex.get('antiscalant_cost_pa_inr', 0):,.0f}"])
         if opex.get('uf_ceb_chemicals_pa_inr', 0) > 0:

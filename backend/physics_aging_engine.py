@@ -234,7 +234,7 @@ class PhysicsAgingEngine:
         recycle_feed_ions: dict = None,   # blended feed ions when concentrate recycle is active
         bulk_si: dict = None,
         antiscalant_type: str = "Phosphonate",
-        enable_booster: bool = False,
+        enable_booster: bool = None,
         interboost_dp_bar: float = None,
     ) -> dict:
         """
@@ -352,10 +352,12 @@ class PhysicsAgingEngine:
         p_perm = bsum.get("permeate_pressure_bar", 0.0)
         self.p_perm = p_perm
 
-        if not enable_booster and bsum.get("enable_booster"):
+        if enable_booster is None:
             enable_booster = bsum.get("enable_booster", False)
         if interboost_dp_bar is None:
             interboost_dp_bar = bsum.get("interboost_dp_bar")
+        bsum["enable_booster"] = enable_booster
+        bsum["interboost_dp_bar"] = interboost_dp_bar
         self.enable_booster = enable_booster
         self.interboost_dp_bar = interboost_dp_bar
 
@@ -507,8 +509,8 @@ class PhysicsAgingEngine:
                     membrane_model, stages, vessels_per_stage,
                     elements_per_vessel, aged_params=aged_params,
                     permeate_pressure_bar=p_perm,
-                    enable_booster=self.enable_booster,
-                    interboost_dp_bar=self.interboost_dp_bar
+                    enable_booster=enable_booster,
+                    interboost_dp_bar=interboost_dp_bar
                 )
                 if res_calib["summary"]["total_recovery"] < r0:
                     A_lo = A_mid
@@ -1508,8 +1510,8 @@ class PhysicsAgingEngine:
                     membrane_model, stages, vessels_per_stage,
                     elements_per_vessel, aged_params=aged_params,
                     permeate_pressure_bar=p_perm,
-                    enable_booster=self.enable_booster,
-                    interboost_dp_bar=self.interboost_dp_bar
+                    enable_booster=enable_booster,
+                    interboost_dp_bar=interboost_dp_bar
                 )
                 rec_mid = res["summary"]["total_recovery"]
                 best_result = res
@@ -1533,8 +1535,8 @@ class PhysicsAgingEngine:
                     membrane_model, stages, vessels_per_stage,
                     elements_per_vessel, aged_params=aged_params,
                     permeate_pressure_bar=p_perm,
-                    enable_booster=self.enable_booster,
-                    interboost_dp_bar=self.interboost_dp_bar
+                    enable_booster=enable_booster,
+                    interboost_dp_bar=interboost_dp_bar
                 )
             except Exception:
                 # Last resort: return degraded year0 snapshot

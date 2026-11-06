@@ -6528,10 +6528,11 @@ window.openMembraneDatasheetModal = async function(modelName) {
     }
 
     try {
-        const res = await fetch(API_BASE + '/api/membranes/ro');
+        const res = await fetch(API_BASE + '/api/membranes');
         if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-        const membranes = await res.json();
-        const mem = membranes.find(m => m.model === selectedModel) || membranes.find(m => m.id === selectedModel);
+        const data = await res.json();
+        const membranes = data.ro_membranes || (Array.isArray(data) ? data : []);
+        const mem = membranes.find(m => m.model === selectedModel) || membranes.find(m => m.id === selectedModel) || membranes.find(m => m.name === selectedModel);
 
         if (!mem || !mem.datasheet) {
             if (bodyEl) {
@@ -6544,34 +6545,40 @@ window.openMembraneDatasheetModal = async function(modelName) {
             return;
         }
 
-        const ds = mem.datasheet;
+        const ds = mem.datasheet || {};
         const geom = ds.geometry || {};
         const test = ds.test_conditions || {};
         const limits = ds.operating_limits || {};
 
-        const hasRejection = mem.nominal_rejection != null || ds.nominal_rejection_pct != null;
-        const hasPressure = test.pressure_psi != null || test.pressure_bar != null;
-        const hasFlow = mem.nominal_flow_m3d != null || ds.permeate_flow_m3d != null;
-        const hasRecovery = test.recovery_pct != null || ds.test_recovery_pct != null;
+        const testSolution = ds.test_solution || test.solution || '—';
+        const testPressurePsi = ds.test_pressure_psi != null ? ds.test_pressure_psi : test.pressure_psi;
+        const testPressureBar = ds.test_pressure_bar != null ? ds.test_pressure_bar : test.pressure_bar;
+        const testRecoveryPct = ds.test_recovery_pct != null ? ds.test_recovery_pct : test.recovery_pct;
+        const nomRejPct = ds.nominal_rejection_pct != null ? ds.nominal_rejection_pct : (mem.nominal_rejection != null ? mem.nominal_rejection * 100 : null);
+        const minRejPct = ds.min_rejection_pct != null ? ds.min_rejection_pct : (mem.min_rejection != null ? mem.min_rejection * 100 : null);
+        const permFlowM3d = ds.permeate_flow_m3d != null ? ds.permeate_flow_m3d : mem.nominal_flow_m3d;
+
+        const hasRejection = nomRejPct != null;
+        const hasPressure = testPressurePsi != null || testPressureBar != null;
+        const hasFlow = permFlowM3d != null;
+        const hasRecovery = testRecoveryPct != null;
         const isVerified = !ds.is_estimate && hasRejection && hasPressure && hasFlow && hasRecovery;
 
-        const nomRejStr = mem.nominal_rejection != null ? (mem.nominal_rejection * 100).toFixed(2) + '%' : (ds.nominal_rejection_pct != null ? ds.nominal_rejection_pct.toFixed(2) + '%' : '—');
-        const minRejStr = ds.min_rejection_pct != null ? ds.min_rejection_pct.toFixed(2) + '%' : '—';
+        const nomRejStr = nomRejPct != null ? Number(nomRejPct).toFixed(2) + '%' : '—';
+        const minRejStr = minRejPct != null ? Number(minRejPct).toFixed(2) + '%' : '—';
         let testPresStr = '—';
-        if (test.pressure_psi != null) {
-            const pBar = test.pressure_bar != null ? test.pressure_bar.toFixed(1) : (test.pressure_psi * 0.0689476).toFixed(1);
-            testPresStr = `${test.pressure_psi} psi (${pBar} bar)`;
-        } else if (test.pressure_bar != null) {
-            testPresStr = `${test.pressure_bar.toFixed(1)} bar`;
+        if (testPressurePsi != null) {
+            const pBar = testPressureBar != null ? Number(testPressureBar).toFixed(1) : (testPressurePsi * 0.0689476).toFixed(1);
+            testPresStr = `${testPressurePsi} psi (${pBar} bar)`;
+        } else if (testPressureBar != null) {
+            testPresStr = `${Number(testPressureBar).toFixed(1)} bar`;
         }
         let nomFlowStr = '—';
-        const flowM3d = mem.nominal_flow_m3d != null ? mem.nominal_flow_m3d : ds.permeate_flow_m3d;
-        if (flowM3d != null) {
-            const flowGpd = ds.nominal_flow_gpd || Math.round(flowM3d * 264.172);
-            nomFlowStr = `${flowM3d.toFixed(1)} m³/d (${flowGpd} GPD)`;
+        if (permFlowM3d != null) {
+            const flowGpd = ds.nominal_flow_gpd || Math.round(permFlowM3d * 264.172);
+            nomFlowStr = `${Number(permFlowM3d).toFixed(1)} m³/d (${flowGpd} GPD)`;
         }
-        const recVal = test.recovery_pct != null ? test.recovery_pct : ds.test_recovery_pct;
-        const recStr = recVal != null ? `${recVal}%` : '—';
+        const recStr = testRecoveryPct != null ? `${testRecoveryPct}%` : '—';
 
         const permAStr = mem.permeability_A != null ? (typeof mem.permeability_A === 'number' ? mem.permeability_A.toExponential(3) : mem.permeability_A) + ' m/(s·Pa)' : '—';
         const permBStr = mem.permeability_B != null ? (typeof mem.permeability_B === 'number' ? mem.permeability_B.toExponential(3) : mem.permeability_B) + ' m/s' : '—';
@@ -6614,7 +6621,7 @@ window.openMembraneDatasheetModal = async function(modelName) {
                                 <i class="fa-solid fa-flask-vial"></i> Rating Conditions
                             </h4>
                             <table style="width: 100%; font-size: 0.82rem; border-collapse: collapse;">
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Test Solution</td><td style="text-align: right; font-weight: 600;">${escapeHtml(test.solution || '—')}</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Test Solution</td><td style="text-align: right; font-weight: 600;">${escapeHtml(testSolution)}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Test Pressure</td><td style="text-align: right; font-weight: 600;">${testPresStr}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Nominal Rejection</td><td style="text-align: right; font-weight: 600; color: #16a34a;">${nomRejStr}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Minimum Rejection</td><td style="text-align: right; font-weight: 600;">${minRejStr}</td></tr>
@@ -6629,11 +6636,11 @@ window.openMembraneDatasheetModal = async function(modelName) {
                                 <i class="fa-solid fa-ruler-combined"></i> Channel &amp; Dimensions
                             </h4>
                             <table style="width: 100%; font-size: 0.82rem; border-collapse: collapse;">
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Active Area</td><td style="text-align: right; font-weight: 600;">${mem.active_area_m2 != null ? (mem.active_area_m2 + ' m²' + (ds.active_area_ft2 ? ' (' + ds.active_area_ft2 + ' ft²)' : '')) : '—'}</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Active Area</td><td style="text-align: right; font-weight: 600;">${(mem.area != null ? mem.area : mem.active_area_m2) != null ? ((mem.area != null ? mem.area : mem.active_area_m2) + ' m²' + (ds.active_area_ft2 ? ' (' + ds.active_area_ft2 + ' ft²)' : '')) : '—'}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Feed Spacer (h)</td><td style="text-align: right; font-weight: 600; color: #2563eb;">${mem.spacer_thickness_mil != null ? (mem.spacer_thickness_mil + ' mil (' + (mem.spacer_thickness_mm != null ? mem.spacer_thickness_mm.toFixed(3) : (mem.spacer_thickness_mil * 0.0254).toFixed(3)) + ' mm)') : (mem.feed_spacer_mil != null ? mem.feed_spacer_mil + ' mil' : '—')}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Hydraulic Dia (d_h)</td><td style="text-align: right; font-weight: 600; color: #2563eb;">${mem.hydraulic_diameter_mm != null ? mem.hydraulic_diameter_mm.toFixed(2) + ' mm' : (mem.hydraulic_diameter_m != null ? (mem.hydraulic_diameter_m * 1000).toFixed(2) + ' mm' : '—')}</td></tr>
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Element Diameter</td><td style="text-align: right; font-weight: 600;">${geom.diameter_inch ? geom.diameter_inch + '" (' + (geom.diameter_mm || Math.round(geom.diameter_inch * 25.4)) + ' mm)' : (mem.model && mem.model.includes('8040') ? '8.0" (203 mm)' : (mem.model && mem.model.includes('4040') ? '4.0" (101 mm)' : '—'))}</td></tr>
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Element Length</td><td style="text-align: right; font-weight: 600;">${geom.length_inch ? geom.length_inch + '" (' + (geom.length_mm || Math.round(geom.length_inch * 25.4)) + ' mm)' : '—'}</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Element Diameter</td><td style="text-align: right; font-weight: 600;">${geom.diameter_inch ? geom.diameter_inch + '" (' + (geom.diameter_mm || Math.round(geom.diameter_inch * 25.4)) + ' mm)' : (mem.diameter_m ? (mem.diameter_m * 39.3701).toFixed(1) + '" (' + Math.round(mem.diameter_m * 1000) + ' mm)' : ((mem.model || mem.id || '').includes('8040') ? '8.0" (203 mm)' : ((mem.model || mem.id || '').includes('4040') ? '4.0" (101 mm)' : '—')))}</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Element Length</td><td style="text-align: right; font-weight: 600;">${geom.length_inch ? geom.length_inch + '" (' + (geom.length_mm || Math.round(geom.length_inch * 25.4)) + ' mm)' : (mem.length_m ? (mem.length_m * 39.3701).toFixed(1) + '" (' + Math.round(mem.length_m * 1000) + ' mm)' : '—')}</td></tr>
                             </table>
                         </div>
 

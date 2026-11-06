@@ -185,7 +185,7 @@ class MembraneDatabase:
             "length_m": 1.016,
             "diameter_m": 0.201,
             "nominal_rejection": 0.997,
-            "min_rejection": 0.9960000000000001,
+            "min_rejection": 0.996,
             "flags": ['LF'],
             "max_temp_c": 45.0,
             "ph_range": [2.0, 11.0],
@@ -243,7 +243,7 @@ class MembraneDatabase:
             "length_m": 1.016,
             "diameter_m": 0.201,
             "nominal_rejection": 0.997,
-            "min_rejection": 0.9960000000000001,
+            "min_rejection": 0.996,
             "flags": [],
             "max_temp_c": 45.0,
             "ph_range": [2.0, 11.0],
@@ -301,7 +301,7 @@ class MembraneDatabase:
             "length_m": 1.016,
             "diameter_m": 0.201,
             "nominal_rejection": 0.997,
-            "min_rejection": 0.9960000000000001,
+            "min_rejection": 0.996,
             "flags": ['LPM'],
             "max_temp_c": 45.0,
             "ph_range": [2.0, 11.0],
@@ -359,7 +359,7 @@ class MembraneDatabase:
             "length_m": 1.016,
             "diameter_m": 0.201,
             "nominal_rejection": 0.997,
-            "min_rejection": 0.9960000000000001,
+            "min_rejection": 0.996,
             "flags": [],
             "max_temp_c": 45.0,
             "ph_range": [2.0, 11.0],
@@ -1162,17 +1162,17 @@ class MembraneDatabase:
         "HPA-RO-8040": {
             "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
             "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 39.7,
-            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.50, "is_estimate": False
+            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.60, "is_estimate": False
         },
         "HPA-RO-8040-LF-WW": {
             "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
             "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 38.0,
-            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.50, "is_estimate": False
+            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.60, "is_estimate": False
         },
         "HPARO-8040-BW-400": {
             "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
             "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 40.0,
-            "nominal_rejection_pct": 99.60, "min_rejection_pct": 99.40, "is_estimate": False
+            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.60, "is_estimate": False
         },
         "SWRO-8040-400": {
             "test_solution": "32,000 ppm NaCl", "test_pressure_psi": 800.0, "test_pressure_bar": 55.16,

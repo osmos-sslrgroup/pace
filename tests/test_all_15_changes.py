@@ -49,7 +49,21 @@ def test_15_changes():
     res_crit = pe_crit.run(crit_data)
     assert res_crit.get('recommended_recovery') is None
     assert any(v.get('risk') == 'CRITICAL' for v in res_crit.get('scaling_risks', {}).values())
-    print(f"[PASS] CHANGE 2: Recovery sweep: safe rec = {res_safe['recommended_recovery']}%, crit scaling rec = {res_crit['recommended_recovery']}")
+
+    # Regression test verifying C(4) mapping and scaling risk with boron and bicarbonate
+    pe_boron = ProcessRecommendationEngine(pp)
+    boron_water = ProcessInputData(
+        feed_tds=1200.0, target_tds=50.0, target_recovery=70.0,
+        feed_ph=7.5, feed_temp=25.0,
+        ca=60.0, mg_ion=20.0, na=250.0, cl=350.0, so4=150.0,
+        hco3=120.0, boron=4.5, sio2=25.0
+    )
+    res_boron = pe_boron.run(boron_water)
+    assert 'Calcite' in res_boron.get('scaling_risks', {})
+    assert res_boron['scaling_risks']['Calcite']['risk'] == 'HIGH'
+    assert res_boron.get('recommended_recovery') == 70.0
+    assert any('Boron removal' in f for f in res_boron.get('flags', []))
+    print(f"[PASS] CHANGE 2: Recovery sweep: safe rec = {res_safe['recommended_recovery']}%, crit scaling rec = {res_crit['recommended_recovery']}, boron water rec = {res_boron['recommended_recovery']}%")
 
     # CHANGE 3: Alkalinity-based dosing
     dose_acid = compute_chemical_dose({'pH': 7.8, 'HCO3': 200.0}, target_ph=6.5, chemical='H2SO4')
@@ -220,9 +234,6 @@ def test_15_changes():
     print(f"[PASS] CHANGE 15: Spacer=31 mil, d_h={mem_norm['hydraulic_diameter_m']*1000:.2f} mm")
 
     print("\nALL 15 CHANGES VERIFIED AND PASSED!")
-
-if __name__ == '__main__':
-    test_15_changes()
 
 if __name__ == '__main__':
     test_15_changes()
