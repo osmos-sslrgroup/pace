@@ -113,6 +113,7 @@ class AgingEngine:
     """Physics-based membrane aging engine for PACE."""
 
     def __init__(self):
+        """Initialize AgingEngine with an instance of ROEngine."""
         self.ro_engine = ROEngine()
 
     # ──────────────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ from membrane_database import MembraneDatabase
 
 class UFEngine:
     def __init__(self):
+        """Initialize UFEngine for ultrafiltration sizing and hydraulic verification."""
         pass
         
     def _viscosity_correction(self, temp_c: float) -> float:
@@ -92,6 +93,7 @@ class UFEngine:
         warnings = []
         
         def add_warning(name, unit, limit, est):
+            """Append a pass/fail compliance check entry to the UF warnings list."""
             warnings.append({
                 "type": name,
                 "unit": unit,

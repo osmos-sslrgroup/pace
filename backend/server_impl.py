@@ -34,9 +34,11 @@ import base64
 
 class BasicAuthASGIMiddleware:
     def __init__(self, app):
+        """Initialize HTTP Basic authentication middleware."""
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        """Intercept ASGI requests and enforce HTTP Basic auth on /api/ endpoints."""
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
@@ -73,6 +75,7 @@ class BasicAuthASGIMiddleware:
             await self.send_unauthorized(send)
 
     async def send_unauthorized(self, send):
+        """Send an HTTP 401 Unauthorized response to unauthenticated requests."""
         await send({
             "type": "http.response.start",
             "status": 401,
@@ -127,6 +130,7 @@ class FeedWaterData(BaseModel):
     iron: float = 0.0
     manganese: float = 0.0
     phosphate: float = 0.0
+    boron: float = 0.0
     tss: Optional[float] = 0.0
     turbidity: Optional[float] = 0.0
     tds: Optional[float] = 0.0
@@ -186,6 +190,9 @@ class ConditioningConfig(BaseModel):
     target_ph: Optional[float] = None
     chemical: Optional[str] = None
     co2_degassing: bool = False
+    apply_to_feed: bool = False
+    feed_conditioning: Optional[dict] = None
+    permeate_conditioning: Optional[dict] = None
 
 class RecycleConfig(BaseModel):
     enabled: bool = False
@@ -211,6 +218,7 @@ class SystemCalcInput(BaseModel):
     interboost_enabled: Optional[bool] = False
     interboost_dp_bar: Optional[float] = None
     degasser: Optional[dict] = None
+    antiscalant_dosed: Optional[bool] = True
     antiscalant_type: Optional[str] = "Phosphonate"
     antiscalant_dose_mg_l: Optional[float] = 3.0
     pass1: Optional[PassConfig] = None
@@ -227,10 +235,12 @@ class SystemCalcInput(BaseModel):
 
 @app.get("/")
 def read_root():
+    """Redirect root path to the index HTML dashboard."""
     return RedirectResponse(url="/index.html")
 
 @app.post("/api/calculate-scaling")
 def calculate_scaling(data: FeedWaterData):
+    """Calculate geochemical saturation indices for feed water using PHREEQC."""
     try:
         # Create a new solution
         sol = pp.add_solution({
@@ -381,6 +391,7 @@ def auto_balance(data: AutoBalanceInput):
 
 @app.post("/api/process-recommendation")
 def process_recommendation(data: ProcessInputData):
+    """Run process recommendation engine to determine optimal treatment configuration."""
     try:
         engine = ProcessRecommendationEngine(pp)
         result = engine.run(data)
@@ -436,6 +447,7 @@ def calculate_system(data: SystemCalcInput):
 
 @app.post("/api/auto-select-membrane")
 def auto_select_membrane(data: SystemCalcInput):
+    """Automatically recommend the best membrane model for the given feed water and design criteria."""
     try:
         best_membrane = None
         best_recovery = 0.0
@@ -464,6 +476,7 @@ def auto_select_membrane(data: SystemCalcInput):
 
 @app.get("/api/membranes")
 def list_membranes():
+    """Return all catalog RO membranes and UF modules."""
     try:
         return {
             "ro_membranes": MembraneDatabase.list_ro_membranes(),
@@ -474,6 +487,7 @@ def list_membranes():
 
 @app.post("/api/generate-calculation-report")
 def generate_calc_report(data: SystemCalcInput):
+    """Generate and return a downloadable Word document (.docx) calculation report."""
     try:
         import tempfile, os
         from docx2pdf import convert as docx2pdf_convert
@@ -682,6 +696,7 @@ class PhysicsCalcInput(BaseModel):
     interboost_enabled: Optional[bool] = False
     interboost_dp_bar: Optional[float] = None
     degasser: Optional[dict] = None
+    antiscalant_dosed: Optional[bool] = True
     antiscalant_type: Optional[str] = "Phosphonate"
     antiscalant_dose_mg_l: Optional[float] = 3.0
     pass1: Optional[PassConfig] = None
@@ -697,8 +712,6 @@ class PhysicsCalcInput(BaseModel):
     n_years: int = 5                  # Total years to project
     feed_quality: Optional[PhysicsFeedQuality] = None
     cip_config: Optional[PhysicsCIPConfig] = None
-    antiscalant_dosed: bool = True
-
 
 # ── Shared projection core ──────────────────────────────────────────────────
 # Both /api/simulate-aging and /api/calculate-system-physics call this
@@ -724,6 +737,11 @@ def _run_projection_core(
     recycle_enabled: bool = False,
     recycle_ratio: float = 0.0,
     antiscalant_type: str = "Phosphonate",
+    permeate_pressure_bar: Optional[float] = 0.0,
+    enable_booster: Optional[bool] = False,
+    interboost_dp_bar: Optional[float] = None,
+    degasser: Optional[dict] = None,
+    antiscalant_dose_mg_l: Optional[float] = 3.0,
     # Sub-configuration objects — forwarded verbatim to the simulation engine
     # so that 2P-RO, UF+RO, NF, and any future train uses the correct config.
     pass1:        Optional[dict] = None,
@@ -788,6 +806,13 @@ def _run_projection_core(
         # Recycle flags — required by calculate_system_with_recycle
         "recycle_enabled":     recycle_enabled,
         "recycle_ratio":       recycle_ratio,
+        "permeate_pressure_bar": permeate_pressure_bar,
+        "enable_booster":        enable_booster,
+        "interboost_dp_bar":     interboost_dp_bar,
+        "degasser":              degasser,
+        "antiscalant_dosed":     antiscalant_dosed,
+        "antiscalant_type":      antiscalant_type,
+        "antiscalant_dose_mg_l": antiscalant_dose_mg_l,
     }
     if uf_module:    input_dict["uf_module"]    = uf_module
     if pass1:        input_dict["pass1"]        = pass1
@@ -1137,6 +1162,11 @@ def calculate_system_physics(data: PhysicsCalcInput):
             antiscalant_type    = getattr(data, "antiscalant_type", "Phosphonate"),
             recycle_enabled     = data.recycle_enabled or False,
             recycle_ratio       = data.recycle_ratio or 0.0,
+            permeate_pressure_bar = data.permeate_pressure_bar,
+            enable_booster        = data.enable_booster,
+            interboost_dp_bar     = data.interboost_dp_bar,
+            degasser              = data.degasser,
+            antiscalant_dose_mg_l = data.antiscalant_dose_mg_l,
             # Sub-configs forwarded verbatim — guarantees all technology trains
             # (RO, UF+RO, NF, UF+NF, 2P-RO, UF+2P-RO) use the user's config
             pass1        = data.pass1.model_dump()        if data.pass1        else None,

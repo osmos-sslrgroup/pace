@@ -1,6 +1,7 @@
+import os
 import sys
 import math
-sys.path.insert(0, 'backend')
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
 from calc_engine import ROEngine
 from membrane_database import MembraneDatabase

@@ -9,6 +9,7 @@ from membrane_database import MembraneDatabase
 
 class ROEngine:
     def __init__(self):
+        """Initialize ROEngine with molar mass definitions and transport constants."""
         # Universal constants
         self.R_gas = 0.08314 # L*bar/(mol*K)
         
@@ -675,6 +676,7 @@ class ROEngine:
             "avg_flux_lmh": avg_flux,
             "feed_pressure_bar": feed_pressure_bar,
             "conc_pressure_bar": stage_exit_pressure,
+            "permeate_pressure_bar": permeate_pressure_bar,
             "total_dp_bar": round(total_dp_bar, 2),
             "total_tmp_bar": round(total_tmp_bar, 2),
             "hp_pump_power_kw": round(hp_pump_power_kw, 2),

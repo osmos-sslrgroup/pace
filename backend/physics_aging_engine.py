@@ -207,6 +207,7 @@ class PhysicsAgingEngine:
     """
 
     def __init__(self):
+        """Initialize PhysicsAgingEngine with default physics parameters and RO simulation engine."""
         self.ro_engine = ROEngine()
         self.p = DEFAULT_PHYSICS_PARAMS.copy()  # mutable per-run copy
 

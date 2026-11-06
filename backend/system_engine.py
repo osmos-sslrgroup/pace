@@ -47,9 +47,11 @@ def _compute_nf_concentrate_scaling(conc_ions: Dict[str, float], feed_ph: float,
     sqrt_I = math.sqrt(max(I, 1e-12))
 
     def log_gamma(z):
+        """Calculate log10 activity coefficient for ion charge z using the Davies equation."""
         return -A_dav * z * z * (sqrt_I / (1.0 + sqrt_I) - 0.3 * I)
 
     def gamma(z):
+        """Calculate activity coefficient gamma for ion charge z."""
         return 10.0 ** log_gamma(z)
 
     def mol(ion):
@@ -135,6 +137,7 @@ def _compute_nf_concentrate_scaling(conc_ions: Dict[str, float], feed_ph: float,
 
 class SystemEngine:
     def __init__(self):
+        """Initialize SystemEngine with UF and RO calculation engines."""
         self.uf_engine = UFEngine()
         self.ro_engine = ROEngine()
         
@@ -193,15 +196,19 @@ class SystemEngine:
             q_net = uf_summary.get("net_product_m3h", target_flow)
             q_annual = q_net * hours_pa
 
-            uf_modules = uf_res.get("sizing", {}).get("total_modules", 1)
-            uf_unit_cost = eco_params.get("uf_module_cost_inr", 65000.0)
+            uf_modules = uf_summary.get("total_modules", uf_res.get("sizing", {}).get("total_modules", 1))
+            uf_module_name = input_data.get("uf_module", "PERMA-UF-i0875s40")
+            uf_mod = MembraneDatabase.get_uf_module(uf_module_name)
+            uf_unit_cost = eco_params.get("uf_module_cost") or eco_params.get("uf_module_cost_inr") or uf_mod.get("unit_cost_inr", 100000.0)
             uf_capex_mem = uf_modules * uf_unit_cost
             uf_equip_sub = uf_capex_mem * 2.0
-            ic_factor = eco_params.get("installation_factor", 0.15)
+            ic_factor = eco_params.get("ic_factor") if eco_params.get("ic_factor") is not None else eco_params.get("installation_factor", 0.15)
             cont_factor = eco_params.get("contingency_factor", 0.10)
             uf_capex_total = uf_equip_sub * (1.0 + ic_factor) * (1.0 + cont_factor)
 
-            uf_kw = uf_res.get("power", {}).get("total_kw", 0.0)
+            feed_kw = uf_mod.get("feed_pump_kw_per_module", 0.75)
+            bw_kw = uf_mod.get("backwash_pump_kw_per_module", 1.10)
+            uf_kw = (feed_kw + bw_kw) * uf_modules
             tariff = eco_params.get("electricity_tariff", 7.50)
             uf_energy_pa = uf_kw * hours_pa * tariff
             uf_life = eco_params.get("uf_membrane_lifetime", 7.0)
@@ -211,7 +218,13 @@ class SystemEngine:
 
             discount_rate = eco_params.get("discount_rate", 0.10)
             project_life = eco_params.get("project_life", 20.0)
-            crf = (discount_rate * ((1 + discount_rate) ** project_life)) / (((1 + discount_rate) ** project_life) - 1) if discount_rate > 0 else 0.05
+            if project_life <= 0:
+                crf = 0.0
+            elif discount_rate > 0:
+                denom = ((1.0 + discount_rate) ** project_life) - 1.0
+                crf = (discount_rate * ((1.0 + discount_rate) ** project_life)) / denom if denom > 0 else (1.0 / project_life)
+            else:
+                crf = 1.0 / project_life
             annualised_capex = uf_capex_total * crf
             cost_per_kl = (annualised_capex + uf_opex_total) / max(1.0, q_annual)
 
@@ -254,8 +267,11 @@ class SystemEngine:
             feed_degas_cfg = input_data.get("degasser") or {}
             if feed_cond_cfg.get("enabled", False) or feed_degas_cfg.get("enabled", False):
                 from conditioning import apply_conditioning
+                ions["pH"] = feed.get("ph", 7.0)
                 ions, feed_dose, cond_feed_ph = apply_conditioning(ions, feed_cond_cfg, feed_degas_cfg)
-                feed["ph"] = cond_feed_ph
+                ions.pop("pH", None)
+                if feed_cond_cfg.get("enabled", False):
+                    feed["ph"] = cond_feed_ph
                 result["feed_conditioning"] = {
                     "dose_mg_l": feed_dose,
                     "target_ph": cond_feed_ph,
@@ -304,9 +320,12 @@ class SystemEngine:
             if perm_cond_cfg.get("enabled", False) or perm_degas_cfg.get("enabled", False):
                 from conditioning import apply_conditioning
                 raw_perm_ions = ro_res["summary"].get("perm_ions", {}).copy()
+                raw_perm_ions["pH"] = ro_res["summary"].get("perm_ph") or feed.get("ph", 7.0)
                 conditioned_perm_ions, perm_dose, cond_perm_ph = apply_conditioning(raw_perm_ions, perm_cond_cfg, perm_degas_cfg)
+                conditioned_perm_ions.pop("pH", None)
                 ro_res["summary"]["conditioned_perm_ions"] = conditioned_perm_ions
-                ro_res["summary"]["perm_ph"] = cond_perm_ph
+                if perm_cond_cfg.get("enabled", False):
+                    ro_res["summary"]["perm_ph"] = cond_perm_ph
                 result["permeate_conditioning"] = {
                     "dose_mg_l": perm_dose,
                     "target_ph": cond_perm_ph,
@@ -332,6 +351,7 @@ class SystemEngine:
                 feed_ph   = feed.get("ph", 7.0) or 7.0
 
                 def _fq(code, sev, msg, val=None, lim=None):
+                    """Record a feed water quality limit check result."""
                     entry = {"type": code, "severity": sev, "message": msg}
                     if val is not None: entry["value"] = round(val, 3)
                     if lim is not None: entry["limit"] = lim
@@ -800,6 +820,7 @@ class SystemEngine:
         
         # Helper to convert Pydantic to dict if needed
         def to_dict(obj):
+            """Convert Pydantic model or mapping to standard Python dict."""
             if hasattr(obj, "dict"): return obj.dict()
             return obj if isinstance(obj, dict) else {}
             
@@ -852,7 +873,8 @@ class SystemEngine:
                     vessels_per_stage=pass1_cfg.get("vessels_per_stage", [4,2]),
                     elements_per_vessel=pass1_cfg.get("elements_per_vessel", 6),
                     permeate_pressure_bar=input_data.get("permeate_pressure_bar", input_data.get("permeate_backpressure", 0.0)),
-                    enable_booster=input_data.get("enable_booster", False)
+                    enable_booster=input_data.get("enable_booster", False),
+                    interboost_dp_bar=input_data.get("interboost_dp_bar", None)
                 )
                 rec = p1_res["summary"]["total_recovery"]
                 if abs(rec - p1_target_rec) < 0.005: break
@@ -862,7 +884,11 @@ class SystemEngine:
             p1_perm_flow = p1_res["summary"]["perm_flow"]
             p1_perm_ions = p1_res["summary"]["perm_ions"]
             
+            p1_perm_ph = p1_res["summary"].get("perm_ph") or feed.get("ph", 7.0)
+            p1_perm_ions["pH"] = p1_perm_ph
             p2_feed_ions, cond_dose, cond_ph = apply_conditioning(p1_perm_ions, cond_cfg)
+            p2_feed_ions.pop("pH", None)
+            p1_perm_ions.pop("pH", None)
             
             p2_est_osmotic = (sum(p2_feed_ions.values()) / 1000.0) * 0.7
             p2_low = max(1.0, p2_est_osmotic - 2.0)
@@ -910,8 +936,9 @@ class SystemEngine:
                     vessels_per_stage=p2_vessels_per_stage,
                     elements_per_vessel=p2_elems_per_vessel,
                     beta_cap=None,
-                    permeate_pressure_bar=pass2_cfg.get("permeate_pressure_bar", 0.0),
-                    enable_booster=pass2_cfg.get("enable_booster", False)
+                    permeate_pressure_bar=pass2_cfg.get("permeate_pressure_bar", input_data.get("permeate_pressure_bar", input_data.get("permeate_backpressure", 0.0))),
+                    enable_booster=pass2_cfg.get("enable_booster", input_data.get("enable_booster", False)),
+                    interboost_dp_bar=pass2_cfg.get("interboost_dp_bar", input_data.get("interboost_dp_bar", None))
                 )
                 rec = p2_res["summary"]["total_recovery"]
                 if abs(rec - p2_target_rec) < 0.005: break
@@ -1005,6 +1032,7 @@ class SystemEngine:
         }
 
     def _calculate_two_pass_economics(self, eco_params, pass1_cfg, pass2_cfg, p1_res, p2_res, cond_dose, p1_perm_flow):
+        """Calculate combined capital and operating expenditures for two-pass RO system."""
         mem1_price = 26880.0
         mem2_price = 26880.0
         
