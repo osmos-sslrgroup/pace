@@ -84,9 +84,11 @@ def test_15_changes():
     mem_norm = MembraneDatabase.get_ro_membrane('HPA-RO-8040')
     assert 'datasheet' in mem_norm
     assert mem_norm['datasheet']['test_pressure_psi'] == 225.0
+    assert mem_norm['datasheet']['is_estimate'] is False
+    assert MembraneDatabase.get_ro_membrane('BW30-400')['datasheet']['is_estimate'] is False
     ro_list = MembraneDatabase.list_ro_membranes()
     assert any('datasheet' in m for m in ro_list)
-    print(f"[PASS] CHANGE 6: Membrane datasheet block verified: {mem_norm['datasheet']['test_solution']}, {mem_norm['datasheet']['test_pressure_psi']} psi")
+    print(f"[PASS] CHANGE 6: Membrane datasheet block verified: {mem_norm['datasheet']['test_solution']}, {mem_norm['datasheet']['test_pressure_psi']} psi (is_estimate=False)")
 
     # CHANGE 7: Concentrate recycle loop
     sys_engine = SystemEngine()

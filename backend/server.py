@@ -1119,6 +1119,8 @@ def _run_projection_core(
         recycle_feed_ions   = recycle_feed_ions,
         bulk_si             = bulk_si,
         antiscalant_type    = antiscalant_type,
+        enable_booster      = enable_booster,
+        interboost_dp_bar   = interboost_dp_bar,
     )
 
     # Ensure physics engine snapshots reflect the TRUE system recovery/flow (vital for 2P-RO)

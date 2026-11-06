@@ -253,7 +253,7 @@ class ProcessRecommendationEngine:
             'K': (d.k or 0) * cf,
             'Cl': (d.cl or 0) * cf,
             'S(6)': f"{(d.so4 or 0) * cf} as SO4",
-            'Alkalinity': f"{(d.hco3 or 0) * cf} as CaCO3",
+            'C(4)': f"{(d.hco3 or 0) * cf} as HCO3",
             'Ba': (d.ba or 0) * cf,
             'Sr': (d.sr or 0) * cf,
             'F': (d.f or 0) * cf,

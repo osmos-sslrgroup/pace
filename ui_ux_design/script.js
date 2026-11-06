@@ -6499,6 +6499,17 @@ window.closeMembraneDbModal = function() {
     if (modal) modal.classList.remove('is-active');
 };
 
+// Helper function to escape untrusted / API-derived strings for safe HTML rendering
+function escapeHtml(str) {
+    if (str == null) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 // Membrane Datasheet Modal Viewer (CHANGE 6)
 window.openMembraneDatasheetModal = async function(modelName) {
     const modal = document.getElementById('membrane-datasheet-modal');
@@ -6510,7 +6521,7 @@ window.openMembraneDatasheetModal = async function(modelName) {
     const bodyEl = document.getElementById('mds-body');
 
     if (titleEl) {
-        titleEl.innerHTML = `<i class="fa-solid fa-file-lines" style="color: var(--primary-color); margin-right: 8px;"></i> Datasheet: <strong>${selectedModel}</strong>`;
+        titleEl.innerHTML = `<i class="fa-solid fa-file-lines" style="color: var(--primary-color); margin-right: 8px;"></i> Datasheet: <strong>${escapeHtml(selectedModel)}</strong>`;
     }
     if (bodyEl) {
         bodyEl.innerHTML = `<div style="text-align: center; color: var(--text-secondary); padding: 2.5rem;"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><p style="margin-top: 1rem;">Loading manufacturer ratings &amp; specifications...</p></div>`;
@@ -6527,7 +6538,7 @@ window.openMembraneDatasheetModal = async function(modelName) {
                 bodyEl.innerHTML = `
                     <div style="padding: 1.5rem; text-align: center; color: var(--text-secondary);">
                         <i class="fa-solid fa-circle-info fa-2x" style="color: #f59e0b; margin-bottom: 0.5rem;"></i>
-                        <p>Datasheet specifications for <strong>${selectedModel}</strong> are not available or pending manufacturer verification.</p>
+                        <p>Datasheet specifications for <strong>${escapeHtml(selectedModel)}</strong> are not available or pending manufacturer verification.</p>
                     </div>`;
             }
             return;
@@ -6587,8 +6598,8 @@ window.openMembraneDatasheetModal = async function(modelName) {
                     <!-- Header Info Banner -->
                     <div style="background: linear-gradient(135deg, rgba(37,99,235,0.08), rgba(99,102,241,0.08)); border: 1px solid rgba(37,99,235,0.2); border-radius: 8px; padding: 1rem 1.25rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
                         <div>
-                            <div style="font-size: 1.2rem; font-weight: 700; color: var(--text-primary);">${mem.model}</div>
-                            <div style="font-size: 0.85rem; color: var(--text-secondary);">${mem.manufacturer} &bull; ${mem.type} &bull; ${mem.material || 'Polyamide Thin-Film Composite'}</div>
+                            <div style="font-size: 1.2rem; font-weight: 700; color: var(--text-primary);">${escapeHtml(mem.model || selectedModel)}</div>
+                            <div style="font-size: 0.85rem; color: var(--text-secondary);">${escapeHtml(mem.manufacturer || '—')} &bull; ${escapeHtml(mem.type || '—')} &bull; ${escapeHtml(mem.material || 'Polyamide Thin-Film Composite')}</div>
                         </div>
                         <div style="text-align: right;">
                             ${isVerified ? '<span style="background: #2563eb; color: #fff; font-size: 0.75rem; font-weight: 600; padding: 4px 10px; border-radius: 12px; text-transform: uppercase;">Datasheet Verified</span>' : '<span style="background: #64748b; color: #fff; font-size: 0.75rem; font-weight: 600; padding: 4px 10px; border-radius: 12px; text-transform: uppercase;">Catalogue Estimate</span>'}
@@ -6603,7 +6614,7 @@ window.openMembraneDatasheetModal = async function(modelName) {
                                 <i class="fa-solid fa-flask-vial"></i> Rating Conditions
                             </h4>
                             <table style="width: 100%; font-size: 0.82rem; border-collapse: collapse;">
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Test Solution</td><td style="text-align: right; font-weight: 600;">${test.solution || '—'}</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Test Solution</td><td style="text-align: right; font-weight: 600;">${escapeHtml(test.solution || '—')}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Test Pressure</td><td style="text-align: right; font-weight: 600;">${testPresStr}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Nominal Rejection</td><td style="text-align: right; font-weight: 600; color: #16a34a;">${nomRejStr}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Minimum Rejection</td><td style="text-align: right; font-weight: 600;">${minRejStr}</td></tr>
@@ -6622,7 +6633,7 @@ window.openMembraneDatasheetModal = async function(modelName) {
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Feed Spacer (h)</td><td style="text-align: right; font-weight: 600; color: #2563eb;">${mem.spacer_thickness_mil != null ? (mem.spacer_thickness_mil + ' mil (' + (mem.spacer_thickness_mm != null ? mem.spacer_thickness_mm.toFixed(3) : (mem.spacer_thickness_mil * 0.0254).toFixed(3)) + ' mm)') : (mem.feed_spacer_mil != null ? mem.feed_spacer_mil + ' mil' : '—')}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Hydraulic Dia (d_h)</td><td style="text-align: right; font-weight: 600; color: #2563eb;">${mem.hydraulic_diameter_mm != null ? mem.hydraulic_diameter_mm.toFixed(2) + ' mm' : (mem.hydraulic_diameter_m != null ? (mem.hydraulic_diameter_m * 1000).toFixed(2) + ' mm' : '—')}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Element Diameter</td><td style="text-align: right; font-weight: 600;">${geom.diameter_inch ? geom.diameter_inch + '" (' + (geom.diameter_mm || Math.round(geom.diameter_inch * 25.4)) + ' mm)' : (mem.model && mem.model.includes('8040') ? '8.0" (203 mm)' : (mem.model && mem.model.includes('4040') ? '4.0" (101 mm)' : '—'))}</td></tr>
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Element Length</td><td style="text-align: right; font-weight: 600;">${geom.length_inch ? geom.length_inch + '" (' + (geom.length_mm || Math.round(geom.length_inch * 25.4)) + ' mm)' : '40.0" (1016 mm)'}</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Element Length</td><td style="text-align: right; font-weight: 600;">${geom.length_inch ? geom.length_inch + '" (' + (geom.length_mm || Math.round(geom.length_inch * 25.4)) + ' mm)' : '—'}</td></tr>
                             </table>
                         </div>
 
@@ -6636,7 +6647,7 @@ window.openMembraneDatasheetModal = async function(modelName) {
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Max Feed Flow</td><td style="text-align: right; font-weight: 600;">${mem.max_feed_flow_m3h != null ? mem.max_feed_flow_m3h + ' m³/h' : '—'}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Max Temperature</td><td style="text-align: right; font-weight: 600;">${mem.max_temperature_c != null ? mem.max_temperature_c + ' °C' : '—'}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Max Turbidity / SDI</td><td style="text-align: right; font-weight: 600;">${limits.max_turbidity_ntu != null || limits.max_sdi != null ? ((limits.max_turbidity_ntu != null ? limits.max_turbidity_ntu + ' NTU' : '') + (limits.max_sdi != null ? ' / SDI ' + limits.max_sdi : '')) : '—'}</td></tr>
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">pH Range (Cont.)</td><td style="text-align: right; font-weight: 600;">${limits.ph_continuous || '—'}</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">pH Range (Cont.)</td><td style="text-align: right; font-weight: 600;">${escapeHtml(limits.ph_continuous || '—')}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Free Chlorine</td><td style="text-align: right; font-weight: 600; color: #dc2626;">&lt; 0.1 mg/L</td></tr>
                             </table>
                         </div>
@@ -6653,7 +6664,7 @@ window.openMembraneDatasheetModal = async function(modelName) {
     } catch (err) {
         console.error("Failed to load datasheet:", err);
         if (bodyEl) {
-            bodyEl.innerHTML = `<div style="padding: 1.5rem; text-align: center; color: #ef4444;"><i class="fa-solid fa-triangle-exclamation"></i> Error loading datasheet: ${err.message}</div>`;
+            bodyEl.innerHTML = `<div style="padding: 1.5rem; text-align: center; color: #ef4444;"><i class="fa-solid fa-triangle-exclamation"></i> Error loading datasheet: ${escapeHtml(err.message)}</div>`;
         }
     }
 };

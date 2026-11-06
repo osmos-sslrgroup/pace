@@ -409,13 +409,16 @@ def _chart_tds_profile(elements, figsize=(5.5, 2.6)):
 def _chart_capex_pie(capex, figsize=(4.0, 3.0)):
     """Generate a pie chart breakdown of CAPEX categories."""
     labels = ['Membranes', 'Vessels', 'HP Pump', 'Booster', 'Install+Cont.']
+    mem_cost = capex.get('membranes_inr', 0) + capex.get('uf_membranes_inr', 0) + capex.get('uf_modules_inr', 0)
     vals   = [
-        capex.get('membranes_inr', 0),
+        mem_cost,
         capex.get('vessels_inr', 0),
-        capex.get('hp_pump_inr', 0),
+        capex.get('hp_pump_inr', 0) + capex.get('uf_pumps_inr', 0),
         capex.get('booster_pump_inr', 0),
         capex.get('ic_inr', 0) + capex.get('contingency_inr', 0),
     ]
+    if sum(vals) <= 0:
+        return None
     colors = [CHART_BRAND, CHART_BLUE, CHART_ORANGE, CHART_GRAY, '#9C27B0']
     fig, ax = plt.subplots(figsize=figsize)
     wedges, texts, autotexts = ax.pie(
@@ -432,8 +435,27 @@ def _chart_capex_pie(capex, figsize=(4.0, 3.0)):
 def _chart_opex_bar(opex, figsize=(4.0, 2.6)):
     """Generate a bar chart of annual OPEX items."""
     labels = ['Energy', 'Membrane Repl.']
-    vals   = [opex.get('energy_cost_pa_inr', 0), opex.get('membrane_repl_pa_inr', 0)]
+    vals   = [
+        opex.get('energy_cost_pa_inr', 0),
+        opex.get('membrane_repl_pa_inr', 0) or opex.get('uf_mem_repl_pa_inr', 0)
+    ]
     colors = [CHART_ORANGE, CHART_BLUE]
+
+    as_cost = opex.get('antiscalant_cost_pa_inr', 0)
+    if as_cost > 0:
+        labels.append('Antiscalant')
+        vals.append(as_cost)
+        colors.append('#9C27B0')
+
+    uf_chem = opex.get('uf_ceb_chemicals_pa_inr', 0)
+    if uf_chem > 0:
+        labels.append('UF Chemicals')
+        vals.append(uf_chem)
+        colors.append('#00BCD4')
+
+    if sum(vals) <= 0:
+        return None
+
     fig, ax = plt.subplots(figsize=figsize)
     bars = ax.bar(labels, [v/1e5 for v in vals], color=colors, alpha=0.85, width=0.45)
     ax.set_title('Annual OPEX Breakdown')
@@ -993,8 +1015,8 @@ class ReportGenerator:
         _heading(doc, f'RO Flow Table (Element Level) – {pass_label}')
         el_rows = []
         for e in elements:
-            feed_tds = sum(v for k,v in e.get('feed_ions', {}).items() if k not in ("SiO2", "B", "CO2"))
-            perm_tds = sum(v for k,v in e.get('perm_ions', {}).items() if k not in ("SiO2", "B", "CO2"))
+            feed_tds = sum(v for k,v in e.get('feed_ions', {}).items() if k not in ("B", "CO2"))
+            perm_tds = sum(v for k,v in e.get('perm_ions', {}).items() if k not in ("B", "CO2"))
             el_rows.append([
                 str(e.get('stage', '—')), str(e.get('position', '—')), membrane,
                 f"{e.get('recovery', 0)*100:.1f}",
@@ -1276,8 +1298,13 @@ class ReportGenerator:
         opex_rows = [
             ['Annual Operating Hours',       f"{opex.get('annual_hours', 0):,.0f} hrs"],
             ['Electricity / Energy Cost',    f"₹ {opex.get('energy_cost_pa_inr', 0):,.0f}"],
-            ['RO Membrane Replacement',      f"₹ {opex.get('membrane_repl_pa_inr', 0):,.0f}"],
         ]
+        if opex.get('membrane_repl_pa_inr', 0) > 0:
+            opex_rows.append(['RO Membrane Replacement', f"₹ {opex.get('membrane_repl_pa_inr', 0):,.0f}"])
+        elif opex.get('uf_mem_repl_pa_inr', 0) > 0:
+            opex_rows.append(['UF Membrane Replacement', f"₹ {opex.get('uf_mem_repl_pa_inr', 0):,.0f}"])
+        if opex.get('antiscalant_cost_pa_inr', 0) > 0:
+            opex_rows.append(['Antiscalant Chemical Dosing', f"₹ {opex.get('antiscalant_cost_pa_inr', 0):,.0f}"])
         if opex.get('uf_ceb_chemicals_pa_inr', 0) > 0:
             opex_rows.append(['UF CEB Chemicals (Citric Acid + NaOCl)', f"₹ {opex.get('uf_ceb_chemicals_pa_inr', 0):,.0f}"])
         opex_rows.append(['TOTAL OPEX', f"₹ {opex.get('total_opex_pa_inr', 0):,.0f}"])
@@ -1552,7 +1579,7 @@ class ReportGenerator:
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(4)
         _run(p, 'Footnotes: ', bold=True, size=8)
-        _run(p, '*TDS and Conductivity include dissolved ionic salts only (excludes SiO₂, B, CO₂). ',
+        _run(p, '*TDS includes dissolved ionic salts and neutral SiO₂ (excludes B and CO₂). Conductivity is calculated from ionic salts only. ',
              italic=True, size=8)
 
     # ══════════════════════════════════════════════════════════════════════════

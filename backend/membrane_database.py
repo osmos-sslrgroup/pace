@@ -1137,19 +1137,76 @@ class MembraneDatabase:
         },
     }
 
+    # Verified manufacturer datasheet ratings
+    VERIFIED_DATASHEETS = {
+        "BW30-400": {
+            "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
+            "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 40.0,
+            "nominal_rejection_pct": 99.50, "min_rejection_pct": 99.30, "is_estimate": False
+        },
+        "SW30HRLE-400": {
+            "test_solution": "32,000 ppm NaCl", "test_pressure_psi": 800.0, "test_pressure_bar": 55.16,
+            "test_recovery_pct": 8.0, "test_temp_c": 25.0, "permeate_flow_m3d": 28.4,
+            "nominal_rejection_pct": 99.80, "min_rejection_pct": 99.65, "is_estimate": False
+        },
+        "CPA5-LD": {
+            "test_solution": "1,500 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
+            "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 41.6,
+            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.50, "is_estimate": False
+        },
+        "HPA-4040": {
+            "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
+            "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 9.1,
+            "nominal_rejection_pct": 99.60, "min_rejection_pct": 99.40, "is_estimate": False
+        },
+        "HPA-RO-8040": {
+            "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
+            "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 39.7,
+            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.50, "is_estimate": False
+        },
+        "HPA-RO-8040-LF-WW": {
+            "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
+            "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 38.0,
+            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.50, "is_estimate": False
+        },
+        "HPARO-8040-BW-400": {
+            "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
+            "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 40.0,
+            "nominal_rejection_pct": 99.60, "min_rejection_pct": 99.40, "is_estimate": False
+        },
+        "SWRO-8040-400": {
+            "test_solution": "32,000 ppm NaCl", "test_pressure_psi": 800.0, "test_pressure_bar": 55.16,
+            "test_recovery_pct": 8.0, "test_temp_c": 25.0, "permeate_flow_m3d": 24.6,
+            "nominal_rejection_pct": 99.75, "min_rejection_pct": 99.50, "is_estimate": False
+        },
+        "SWRO-FR-8040-400": {
+            "test_solution": "32,000 ppm NaCl", "test_pressure_psi": 800.0, "test_pressure_bar": 55.16,
+            "test_recovery_pct": 8.0, "test_temp_c": 25.0, "permeate_flow_m3d": 22.7,
+            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.50, "is_estimate": False
+        },
+        "SWRO-HLE-8040-400": {
+            "test_solution": "32,000 ppm NaCl", "test_pressure_psi": 800.0, "test_pressure_bar": 55.16,
+            "test_recovery_pct": 8.0, "test_temp_c": 25.0, "permeate_flow_m3d": 26.5,
+            "nominal_rejection_pct": 99.75, "min_rejection_pct": 99.50, "is_estimate": False
+        },
+    }
 
     @classmethod
     def get_ro_membrane(cls, name: str) -> Dict[str, Any]:
         """Retrieve and normalize an RO/NF membrane record by model name."""
+        catalog_key = name if name in cls.RO_MEMBRANES else "BW30-400"
         raw_mem = cls.RO_MEMBRANES.get(name, cls.RO_MEMBRANES["BW30-400"])
-        return cls._normalize_membrane(raw_mem)
+        return cls._normalize_membrane(raw_mem, catalog_key=catalog_key)
 
     @classmethod
-    def _normalize_membrane(cls, raw_mem: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_membrane(cls, raw_mem: Dict[str, Any], catalog_key: str = "") -> Dict[str, Any]:
         """
         Normalizes any catalog element into the 8.1 Membrane Datasheet Schema shape.
         """
         mem = raw_mem.copy()
+        model_name = mem.get("model") or catalog_key
+        if model_name and not mem.get("model"):
+            mem["model"] = model_name
         
         # 1. membrane_class
         mem["membrane_class"] = mem.get("type", "BWRO")
@@ -1208,65 +1265,10 @@ class MembraneDatabase:
         if min_rej is None:
             min_rej = 0.995 if not is_swro else 0.997
 
-        # Verified manufacturer datasheet ratings
-        VERIFIED_DATASHEETS = {
-            "BW30-400": {
-                "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
-                "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 40.0,
-                "nominal_rejection_pct": 99.50, "min_rejection_pct": 99.30, "is_estimate": False
-            },
-            "SW30HRLE-400": {
-                "test_solution": "32,000 ppm NaCl", "test_pressure_psi": 800.0, "test_pressure_bar": 55.16,
-                "test_recovery_pct": 8.0, "test_temp_c": 25.0, "permeate_flow_m3d": 28.4,
-                "nominal_rejection_pct": 99.80, "min_rejection_pct": 99.65, "is_estimate": False
-            },
-            "CPA5-LD": {
-                "test_solution": "1,500 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
-                "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 41.6,
-                "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.50, "is_estimate": False
-            },
-            "HPA-4040": {
-                "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
-                "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 9.1,
-                "nominal_rejection_pct": 99.60, "min_rejection_pct": 99.40, "is_estimate": False
-            },
-            "HPA-RO-8040": {
-                "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
-                "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 39.7,
-                "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.50, "is_estimate": False
-            },
-            "HPA-RO-8040-LF-WW": {
-                "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
-                "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 38.0,
-                "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.50, "is_estimate": False
-            },
-            "HPARO-8040-BW-400": {
-                "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
-                "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 40.0,
-                "nominal_rejection_pct": 99.60, "min_rejection_pct": 99.40, "is_estimate": False
-            },
-            "SWRO-8040-400": {
-                "test_solution": "32,000 ppm NaCl", "test_pressure_psi": 800.0, "test_pressure_bar": 55.16,
-                "test_recovery_pct": 8.0, "test_temp_c": 25.0, "permeate_flow_m3d": 24.6,
-                "nominal_rejection_pct": 99.75, "min_rejection_pct": 99.50, "is_estimate": False
-            },
-            "SWRO-FR-8040-400": {
-                "test_solution": "32,000 ppm NaCl", "test_pressure_psi": 800.0, "test_pressure_bar": 55.16,
-                "test_recovery_pct": 8.0, "test_temp_c": 25.0, "permeate_flow_m3d": 22.7,
-                "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.50, "is_estimate": False
-            },
-            "SWRO-HLE-8040-400": {
-                "test_solution": "32,000 ppm NaCl", "test_pressure_psi": 800.0, "test_pressure_bar": 55.16,
-                "test_recovery_pct": 8.0, "test_temp_c": 25.0, "permeate_flow_m3d": 26.5,
-                "nominal_rejection_pct": 99.75, "min_rejection_pct": 99.50, "is_estimate": False
-            },
-        }
-
-        model_name = mem.get("model", "")
         if mem.get("datasheet"):
             pass
-        elif model_name in VERIFIED_DATASHEETS:
-            mem["datasheet"] = dict(VERIFIED_DATASHEETS[model_name])
+        elif model_name in cls.VERIFIED_DATASHEETS:
+            mem["datasheet"] = dict(cls.VERIFIED_DATASHEETS[model_name])
         else:
             rec_est = 8.0 if is_swro else 15.0
             default_datasheet = {

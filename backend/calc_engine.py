@@ -442,6 +442,9 @@ class ROEngine:
         """
         membrane = MembraneDatabase.get_ro_membrane(membrane_model)
         
+        # Normalize permeate backpressure to 0.0 if omitted or passed as None
+        permeate_pressure_bar = 0.0 if permeate_pressure_bar is None else float(permeate_pressure_bar)
+        
         system_results = {
             "stages": [],
             "elements": [],

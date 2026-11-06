@@ -234,6 +234,8 @@ class PhysicsAgingEngine:
         recycle_feed_ions: dict = None,   # blended feed ions when concentrate recycle is active
         bulk_si: dict = None,
         antiscalant_type: str = "Phosphonate",
+        enable_booster: bool = False,
+        interboost_dp_bar: float = None,
     ) -> dict:
         """
         Run physics-based multi-year membrane aging projection.
@@ -349,6 +351,13 @@ class PhysicsAgingEngine:
         bsum = baseline_ro_result["summary"]
         p_perm = bsum.get("permeate_pressure_bar", 0.0)
         self.p_perm = p_perm
+
+        if not enable_booster and bsum.get("enable_booster"):
+            enable_booster = bsum.get("enable_booster", False)
+        if interboost_dp_bar is None:
+            interboost_dp_bar = bsum.get("interboost_dp_bar")
+        self.enable_booster = enable_booster
+        self.interboost_dp_bar = interboost_dp_bar
 
         # Compute Year 0 wall SI from baseline CP.
         # At Year 0, membrane is clean (Rm only). Average flux from baseline:
@@ -497,7 +506,9 @@ class PhysicsAgingEngine:
                     feed_flow_m3h, P0_bar, effective_feed_ions, temp_c,
                     membrane_model, stages, vessels_per_stage,
                     elements_per_vessel, aged_params=aged_params,
-                    permeate_pressure_bar=p_perm
+                    permeate_pressure_bar=p_perm,
+                    enable_booster=self.enable_booster,
+                    interboost_dp_bar=self.interboost_dp_bar
                 )
                 if res_calib["summary"]["total_recovery"] < r0:
                     A_lo = A_mid
@@ -773,7 +784,8 @@ class PhysicsAgingEngine:
                 Rc_seg_avg, Rb_seg_avg, Rs_seg_avg, Rn_seg_avg, Rcomp_elem,
                 B_IRR, eps_comp, Rm_base, A0_lmh_bar, B0_ms,
                 n_total_elem, t_SI, delta_s_avg, Lb_avg, mc_avg, q_nom_avg,
-                cip_count_total, membrane, p_perm=p_perm
+                cip_count_total, membrane, p_perm=p_perm,
+                enable_booster=self.enable_booster, interboost_dp_bar=self.interboost_dp_bar
             )
             snap["cip_count"] = cip_count_total
 
@@ -1391,6 +1403,8 @@ class PhysicsAgingEngine:
         cip_count: int,
         membrane: dict,
         p_perm: float = 0.0,
+        enable_booster: bool = False,
+        interboost_dp_bar: float = None,
     ) -> dict:
         """
         Build the aged_params dict and call ROEngine.simulate_system() via
@@ -1493,7 +1507,9 @@ class PhysicsAgingEngine:
                     feed_flow_m3h, P_mid, feed_ions, temp_c,
                     membrane_model, stages, vessels_per_stage,
                     elements_per_vessel, aged_params=aged_params,
-                    permeate_pressure_bar=p_perm
+                    permeate_pressure_bar=p_perm,
+                    enable_booster=self.enable_booster,
+                    interboost_dp_bar=self.interboost_dp_bar
                 )
                 rec_mid = res["summary"]["total_recovery"]
                 best_result = res
@@ -1516,7 +1532,9 @@ class PhysicsAgingEngine:
                     feed_flow_m3h, P0_bar, feed_ions, temp_c,
                     membrane_model, stages, vessels_per_stage,
                     elements_per_vessel, aged_params=aged_params,
-                    permeate_pressure_bar=p_perm
+                    permeate_pressure_bar=p_perm,
+                    enable_booster=self.enable_booster,
+                    interboost_dp_bar=self.interboost_dp_bar
                 )
             except Exception:
                 # Last resort: return degraded year0 snapshot
