@@ -15,6 +15,9 @@ if getattr(sys, 'frozen', False):
 else:
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
+if base_dir not in sys.path:
+    sys.path.insert(0, base_dir)
+
 # Import the existing app from server.py
 from server import app
 

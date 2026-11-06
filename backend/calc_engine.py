@@ -9,6 +9,7 @@ from membrane_database import MembraneDatabase
 
 class ROEngine:
     def __init__(self):
+        """Initialize ROEngine with molar mass definitions and transport constants."""
         # Universal constants
         self.R_gas = 0.08314 # L*bar/(mol*K)
         
@@ -69,20 +70,32 @@ class ROEngine:
             U = 2640.0 if temp_c <= 25.0 else 3020.0
         return math.exp(U * (1.0/298.15 - 1.0/temp_k))
         
+    @staticmethod
+    def _water_viscosity(temp_c: float) -> float:
+        """
+        Dynamic viscosity of water (Pa*s) using the Vogel equation:
+        mu = 2.414e-5 * 10^(247.8 / (T_K - 140.0))
+        Yields 0.890 mPa*s at 25 °C.
+        """
+        t_k = temp_c + 273.15
+        return 2.414e-5 * math.pow(10.0, 247.8 / max(1.0, t_k - 140.0))
+
     def _calculate_cp_beta(self, flux_lmh: float, feed_flow_m3h: float, conc_flow_m3h: float, temp_c: float, membrane: Dict[str, Any], feed_ions: Dict[str, float] = None) -> float:
         """
-        Calculate Concentration Polarization factor (Beta = Cm/Cb) using film theory and the Schock-Miquel mass transfer correlation:
-        Sh = 0.04 * Re^0.75 * Sc^0.33
+        Calculate Concentration Polarization factor (Beta = Cm/Cb) using film theory and Sherwood correlation:
+        Sh = 0.050 * Re^0.875 * Sc^0.25
         k = Sh * D_AB / d_h
         """
         # Average volumetric flow rate in m3/h -> m3/s
         avg_flow_m3h = max(0.001, (feed_flow_m3h + conc_flow_m3h) / 2.0)
         avg_flow_m3s = avg_flow_m3h / 3600.0
 
-        # Spacer geometry properties
-        spacer_mil = membrane.get("feed_spacer_mil", 34)
-        t_fs = spacer_mil * 2.54e-5 # spacer thickness in meters
-        d_h = 2.0 * t_fs
+        # Spacer geometry properties (31 mil HPA datasheet default)
+        spacer_mil = membrane.get("feed_spacer_mil", 31)
+        t_fs = spacer_mil * 2.54e-5 # spacer thickness in meters (h)
+        epsilon = 0.90
+        # Hydraulic diameter: 4ε / [2/h + (1-ε)*8/h] = 1.01 mm for 31 mil
+        d_h = (4.0 * epsilon) / ((2.0 / t_fs) + ((1.0 - epsilon) * 8.0 / t_fs))
         
         # Unrolled feed channel width W (m) approximated from active area and element length
         area_m2 = membrane.get("active_area_m2", 37.2)
@@ -90,14 +103,13 @@ class ROEngine:
         w_total = area_m2 / (2.0 * length_m)
         
         # Cross-sectional flow area (assuming void fraction epsilon = 0.90)
-        epsilon = 0.90
         a_cross = w_total * t_fs * epsilon
         
         # Linear cross-flow velocity v (m/s)
         v = avg_flow_m3s / a_cross if a_cross > 0 else 0.1
         
-        # Water dynamic viscosity mu_T (Pa*s) at temperature temp_c
-        mu_T = 1.0e-3 * math.exp(1808.0 / (temp_c + 273.15) - 6.354)
+        # Water dynamic viscosity mu_T (Pa*s) at temperature temp_c via Vogel equation
+        mu_T = self._water_viscosity(temp_c)
         rho = 1000.0
         nu = mu_T / rho
         
@@ -105,7 +117,7 @@ class ROEngine:
         Re = (d_h * v) / nu if nu > 0 else 100.0
         
         # Diffusivity of solute (m2/s) corrected for temperature using Stokes-Einstein
-        mu_25 = 1.0e-3 * math.exp(1808.0 / 298.15 - 6.354)
+        mu_25 = self._water_viscosity(25.0)
         D_AB_25 = 1.6e-9 # m2/s default
         
         # Ion-specific diffusivities for Pass 2 (Optional Fix 2)
@@ -131,8 +143,8 @@ class ROEngine:
         # Schmidt number Sc
         Sc = nu / D_AB if D_AB > 0 else 600.0
         
-        # Sherwood number Sh
-        Sh = 0.04 * math.pow(Re, 0.75) * math.pow(Sc, 0.33)
+        # Sherwood number Sh: 0.050 * Re^0.875 * Sc^0.25
+        Sh = 0.050 * math.pow(Re, 0.875) * math.pow(Sc, 0.25)
         
         # Mass transfer coefficient k (m/s)
         k = Sh * D_AB / d_h
@@ -157,20 +169,21 @@ class ROEngine:
         avg_flow_m3h = max(0.001, (feed_flow_m3h + conc_flow_m3h) / 2.0)
         avg_flow_m3s = avg_flow_m3h / 3600.0
 
-        spacer_mil = membrane.get("feed_spacer_mil", 34)
-        t_fs = spacer_mil * 2.54e-5 # spacer thickness in meters
-        d_h = 2.0 * t_fs
+        spacer_mil = membrane.get("feed_spacer_mil", 31)
+        t_fs = spacer_mil * 2.54e-5 # spacer thickness in meters (h)
+        epsilon = 0.90
+        # Hydraulic diameter: 4ε / [2/h + (1-ε)*8/h] = 1.01 mm for 31 mil
+        d_h = (4.0 * epsilon) / ((2.0 / t_fs) + ((1.0 - epsilon) * 8.0 / t_fs))
         
         area_m2 = membrane.get("active_area_m2", 37.2)
         length_m = membrane.get("length_m", 1.016)
         w_total = area_m2 / (2.0 * length_m)
         
-        epsilon = 0.90
         a_cross = w_total * t_fs * epsilon
         
         v = avg_flow_m3s / a_cross if a_cross > 0 else 0.1
         
-        mu_T = 1.0e-3 * math.exp(1808.0 / (temp_c + 273.15) - 6.354)
+        mu_T = self._water_viscosity(temp_c)
         rho = 1000.0
         nu = mu_T / rho
         Re = (d_h * v) / nu if nu > 0 else 100.0
@@ -189,10 +202,11 @@ class ROEngine:
                          temp_c: float,
                          membrane: Dict[str, Any],
                          element_idx: int,
-                         beta_cap: float = 1.25,
+                         beta_cap: float = None,
                          max_flux_lmh: float = None,
                          A_override: float = None,
-                         B_override: float = None) -> Dict[str, Any]:
+                         B_override: float = None,
+                         perm_pressure_bar: float = 0.0) -> Dict[str, Any]:
         """
         Simulate a single RO/NF element performance.
         Self-consistent mass-balanced solver for flux and permeate concentration.
@@ -238,7 +252,7 @@ class ROEngine:
             
             # Calculate CP Beta
             beta_actual = self._calculate_cp_beta(flux_lmh, feed_flow_m3h, conc_flow_m3h, temp_c, membrane, feed_ions)
-            beta_calc = min(beta_actual, beta_cap)
+            beta_calc = min(beta_actual, beta_cap) if beta_cap is not None else beta_actual
             
             # Ratio r = Qp / (2 * Qc)
             r = current_perm_flow / (2.0 * max(0.001, feed_flow_m3h - current_perm_flow))
@@ -253,15 +267,24 @@ class ROEngine:
                     surface_ions[ion] = 0.0
                     continue
                     
-                sigma = sigmas.get(ion, 0.99 if not is_nf else 0.347)
+                # Reflection coefficient sigma: default 0.9995 for RO (0.347 for NF)
+                # Na+ and Cl- use 0.9995
+                if not is_nf and ion in ("Na", "Cl"):
+                    sigma = sigmas.get(ion, 0.9995)
+                else:
+                    sigma = sigmas.get(ion, 0.9995 if not is_nf else 0.347)
 
                 # NF-S-01/NF-S-02: use explicit Ps from nf_ps database for NF membranes.
-                # For RO membranes, derive Ps from B and sigma (legacy formula).
+                # For RO membranes, Ps fitted to datasheet (B is fitted from NaCl test).
                 if is_nf:
                     # Use database Ps directly; fall back to Group 3 (monovalent) default
                     P_s_ms = nf_ps_dict.get(ion, 5.80e-7)
                 else:
-                    P_s_ms = B * (1.0 - sigma) / 0.01
+                    ref_sigma = 0.9995
+                    if ion in ("Na", "Cl"):
+                        P_s_ms = B
+                    else:
+                        P_s_ms = B * (1.0 - sigma) / max(1e-6, 1.0 - ref_sigma)
                 P_s_mh = P_s_ms * 3600.0
                 
                 jv_mh = flux_lmh / 1000.0
@@ -306,7 +329,7 @@ class ROEngine:
             if avg_feed_pressure < 1.0:
                 avg_feed_pressure = 1.0
                 
-            perm_pressure = 0.5
+            perm_pressure = perm_pressure_bar
             
             # Net Driving Pressure
             ndp = avg_feed_pressure - perm_pressure - delta_pi
@@ -403,9 +426,12 @@ class ROEngine:
                         stages: int,
                         vessels_per_stage: List[int],
                         elements_per_vessel: int,
-                        beta_cap: float = 1.25,
+                        beta_cap: float = None,
                         max_flux_lmh: float = None,
-                        aged_params: Dict = None) -> Dict[str, Any]:
+                        aged_params: Dict = None,
+                        permeate_pressure_bar: float = 0.0,
+                        enable_booster: bool = False,
+                        interboost_dp_bar: float = None) -> Dict[str, Any]:
         """
         Simulate an entire RO/NF array with interstage booster pump calculations.
         vessels_per_stage: e.g., [4, 2] for a 2-stage system
@@ -415,6 +441,9 @@ class ROEngine:
         If provided, element-wise A and B are overridden from this dict.
         """
         membrane = MembraneDatabase.get_ro_membrane(membrane_model)
+        
+        # Normalize permeate backpressure to 0.0 if omitted or passed as None
+        permeate_pressure_bar = 0.0 if permeate_pressure_bar is None else float(permeate_pressure_bar)
         
         system_results = {
             "stages": [],
@@ -476,7 +505,7 @@ class ROEngine:
                 res = self.simulate_element(
                     vessel_current_flow, vessel_current_pressure, vessel_current_ions,
                     temp_c, membrane, global_elem_idx, beta_cap, max_flux_lmh,
-                    A_override=a_ovr, B_override=b_ovr
+                    A_override=a_ovr, B_override=b_ovr, perm_pressure_bar=permeate_pressure_bar
                 )
                 
                 # Check feed pressure limit
@@ -555,13 +584,19 @@ class ROEngine:
                 avg_stage_ndp = sum(el["ndp"] for el in stage_elements) / len(stage_elements) if stage_elements else 1.0
                 target_ndp = max(0.5, avg_stage_ndp) # ensure at least positive NDP
                 
-                permeate_backpressure = 0.5  # bar
+                permeate_backpressure = permeate_pressure_bar  # bar
                 piping_loss = 0.5  # bar, inter-stage piping friction
                 
                 p_required = pi_conc + target_ndp + permeate_backpressure
                 p_available = stage_exit_pressure - piping_loss
                 
-                boost_dp = max(0.0, p_required - p_available)
+                # Booster pump is OFF by default; only active if enable_booster is True
+                if enable_booster and interboost_dp_bar is not None:
+                    boost_dp = max(0.0, float(interboost_dp_bar))
+                elif enable_booster:
+                    boost_dp = max(0.0, p_required - p_available)
+                else:
+                    boost_dp = 0.0
                 
                 # Booster pump power: P = Q * ΔP / (36 * η)
                 # η = 0.75 for typical centrifugal booster pump
@@ -589,6 +624,8 @@ class ROEngine:
                     "boost_dp_bar": round(boost_dp, 2),
                     "power_kw": round(booster_power_kw, 2),
                     "required": booster_required,
+                    "status": "ACTIVE" if booster_required else ("BYPASSED" if not enable_booster else "NOT_REQUIRED"),
+                    "reason": f"NDP target {target_ndp:.1f} bar" if boost_dp > 0 else "Pressure sufficient without booster",
                     "pump_efficiency": pump_efficiency
                 }
                 
@@ -596,24 +633,24 @@ class ROEngine:
                 
                 # Update feed conditions for next stage
                 current_feed_flow = stage_exit_flow
-                current_feed_pressure = p_available + boost_dp  # Pressure after booster
+                current_feed_pressure = p_available + boost_dp  # Pressure after booster (or p_available when booster off)
                 current_ions = stage_exit_ions.copy()
             else:
                 # Last stage — no booster needed
                 current_feed_flow = stage_exit_flow
                 current_ions = stage_exit_ions.copy()
             
-        # Final System summary
+        # Final System summary (TDS includes SiO2; excludes neutral B and dissolved CO2)
         system_perm_ions = {}
         system_perm_tds = 0.0
-        feed_tds = sum(v for k, v in feed_ions.items() if k not in ("SiO2", "B", "CO2"))
-        conc_tds = sum(v for k, v in current_ions.items() if k not in ("SiO2", "B", "CO2"))
+        feed_tds = sum(v for k, v in feed_ions.items() if k not in ("B", "CO2"))
+        conc_tds = sum(v for k, v in current_ions.items() if k not in ("B", "CO2"))
         
         for ion in feed_ions.keys():
             if total_perm_flow > 0:
                 c = total_perm_mass[ion] / total_perm_flow
                 system_perm_ions[ion] = c
-                if ion not in ("SiO2", "B", "CO2"):
+                if ion not in ("B", "CO2"):
                     system_perm_tds += c
             else:
                 system_perm_ions[ion] = 0.0
@@ -642,6 +679,7 @@ class ROEngine:
             "avg_flux_lmh": avg_flux,
             "feed_pressure_bar": feed_pressure_bar,
             "conc_pressure_bar": stage_exit_pressure,
+            "permeate_pressure_bar": permeate_pressure_bar,
             "total_dp_bar": round(total_dp_bar, 2),
             "total_tmp_bar": round(total_tmp_bar, 2),
             "hp_pump_power_kw": round(hp_pump_power_kw, 2),

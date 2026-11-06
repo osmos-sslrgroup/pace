@@ -1,5 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
+sys.setrecursionlimit(50000)
+
 from PyInstaller.utils.hooks import collect_all
 
 datas = [('ui_ux_design', 'ui_ux_design')]
@@ -16,14 +19,19 @@ hiddenimports += tmp_ret[2]
 
 a = Analysis(
     ['backend/run_desktop.py'],
-    pathex=[],
+    pathex=['backend'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        'torch', 'torchvision', 'torchaudio', 'tensorflow', 'tensorboard',
+        'tf_keras', 'keras', 'dask', 'distributed', 'catboost', 'xgboost',
+        'IPython', 'jupyter', 'zmq', 'bokeh', 'altair', 'sympy', 'sklearn',
+        'scipy', 'statsmodels', 'confluent_kafka', 'docker', 'pytest'
+    ],
     noarchive=False,
     optimize=0,
 )

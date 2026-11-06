@@ -46,6 +46,7 @@ class ProcessInputData(BaseModel):
 
 class ProcessRecommendationEngine:
     def __init__(self, pp_instance: phreeqpython.PhreeqPython):
+        """Initialize ProcessRecommendationEngine with a PHREEQC instance and initial state."""
         self.pp = pp_instance
         self.state = {
             "primary_config": None,
@@ -66,6 +67,7 @@ class ProcessRecommendationEngine:
         }
 
     def run(self, data: ProcessInputData) -> Dict[str, Any]:
+        """Execute all seven decision phases and return the final process recommendation state."""
         self.data = data
 
         self._phase_0_confidence()
@@ -95,18 +97,22 @@ class ProcessRecommendationEngine:
         return self.state
 
     def _add_flag(self, text: str):
+        """Append an informational or warning message to the recommendation state flags."""
         self.state["flags"].append(text)
 
     def _add_pre_flag(self, text: str):
+        """Append a pretreatment recommendation or requirement flag."""
         self.state["pretreatment_flags"].append(text)
 
     def _update_confidence_level(self):
+        """Update the confidence level category based on the cumulative input score."""
         s = self.state["confidence"]["score"]
         if s >= 80: self.state["confidence"]["level"] = "HIGH"
         elif s >= 55: self.state["confidence"]["level"] = "MEDIUM"
         else: self.state["confidence"]["level"] = "LOW"
 
     def _phase_0_confidence(self):
+        """Phase 0: Evaluate input completeness and assign confidence penalties for defaults."""
         d = self.data
         c = self.state["confidence"]
         if d.feed_ph is None:
@@ -131,6 +137,7 @@ class ProcessRecommendationEngine:
         self._update_confidence_level()
 
     def _phase_1_source_type(self):
+        """Phase 1: Determine water source classification and check for biological/oil halts."""
         d = self.data
         if d.source_type is None:
             if d.feed_tds > 20000: d.source_type = "SEAWATER"
@@ -154,6 +161,7 @@ class ProcessRecommendationEngine:
             return
 
     def _phase_2_fouling(self):
+        """Phase 2: Evaluate fouling propensity and determine Ultrafiltration (UF) integration need."""
         d = self.data
         uf_mandatory = False
         uf_recommended = False
@@ -202,6 +210,7 @@ class ProcessRecommendationEngine:
         self.state["uf_integration"] = uf_mandatory or uf_recommended
 
     def _phase_3_primary_process(self):
+        """Phase 3: Select initial membrane technology (NF vs RO variant) based on feed TDS."""
         tds = self.data.feed_tds
         if tds < 200:
             config = "NF"
@@ -232,6 +241,7 @@ class ProcessRecommendationEngine:
         self.state["ro_variant"] = pclass
 
     def _run_phreeqc_cf(self, cf: float) -> dict:
+        """Simulate geochemical equilibrium at concentration factor cf and return saturation indices."""
         d = self.data
         sol = self.pp.add_solution({
             'units': 'mg/L',
@@ -243,14 +253,15 @@ class ProcessRecommendationEngine:
             'K': (d.k or 0) * cf,
             'Cl': (d.cl or 0) * cf,
             'S(6)': f"{(d.so4 or 0) * cf} as SO4",
-            'Alkalinity': f"{(d.hco3 or 0) * cf} as CaCO3",
+            'C(4)': f"{(d.hco3 or 0) * cf} as HCO3",
             'Ba': (d.ba or 0) * cf,
             'Sr': (d.sr or 0) * cf,
             'F': (d.f or 0) * cf,
             'Si': f"{(d.sio2 or 0) * cf} as SiO2",
             'N(-3)': f"{(d.nh4 or 0) * cf} as NH4",
             'N(5)': f"{(d.no3 or 0) * cf} as NO3",
-            'P': f"{(d.po4 or 0) * cf} as PO4"
+            'P': f"{(d.po4 or 0) * cf} as PO4",
+            'B': (d.boron or 0) * cf
         })
         
         res = {
@@ -268,6 +279,7 @@ class ProcessRecommendationEngine:
         return res
 
     def _eval_scaling(self, sis: dict) -> dict:
+        """Evaluate mineral saturation indices against critical thresholds and identify limiting minerals."""
         limits = {
             "Calcite": {"mod": 0.0, "high": 0.5, "crit": 1.0},
             "Gypsum": {"mod": 0.0, "high": 0.3, "crit": 0.5},
@@ -302,22 +314,42 @@ class ProcessRecommendationEngine:
         return risks, has_crit, limiting
 
     def _phase_4_scaling(self):
+        """Phase 4: Perform recovery sweep to determine maximum scaling-free recovery."""
         target = self.data.target_recovery
         
-        cf = 1 / (1 - target / 100)
-        sis = self._run_phreeqc_cf(cf)
-        risks, has_crit, limiting = self._eval_scaling(sis)
-            
-        self.state["scaling_risks"] = risks
-        
+        # First evaluate at target recovery
+        cf_target = 1.0 / max(0.01, 1.0 - target / 100.0)
+        target_sis = self._run_phreeqc_cf(cf_target)
+        target_risks, has_crit, limiting = self._eval_scaling(target_sis)
+        self.state["scaling_risks"] = target_risks
+
         if has_crit:
-            self._add_flag(f"CRITICAL {limiting} scaling detected at {target}% target recovery. Recovery may not be feasible.")
+            # Loop downwards to find max recovery without CRITICAL risk
+            max_safe_rec = None
+            for r in range(int(target) - 5, 45, -5):
+                cf = 1.0 / max(0.01, 1.0 - r / 100.0)
+                sis = self._run_phreeqc_cf(cf)
+                _, crit, _ = self._eval_scaling(sis)
+                if not crit:
+                    max_safe_rec = float(r)
+                    break
+
+            self.state["max_scaling_free_recovery"] = max_safe_rec
+            self.state["recommended_recovery"] = max_safe_rec
+            if max_safe_rec is not None:
+                self._add_flag(f"CRITICAL {limiting} scaling detected at {target}% target recovery. Recovery may not be feasible. Recommended safe recovery: {max_safe_rec}%.")
+            else:
+                self._add_flag(f"CRITICAL {limiting} scaling detected at {target}% target recovery. No safe recovery found down to 50%. Pretreatment or strict chemical dosing required.")
             
             if limiting == "SiO2(a)":
                 self.state["high_ph_ro_hint"] = True
                 self._add_flag("High pH RO configuration hinted: critical silica scaling detected.")
+        else:
+            self.state["max_scaling_free_recovery"] = target
+            self.state["recommended_recovery"] = target
 
     def _phase_5_permeate_quality(self):
+        """Phase 5: Estimate permeate TDS and determine multi-pass RO or high-pH requirements."""
         tds = self.data.feed_tds
         pclass = self.state["ro_variant"]
         
@@ -350,6 +382,7 @@ class ProcessRecommendationEngine:
         self.state["second_pass_required"] = two_pass
 
     def _phase_6_nf_refinement(self):
+        """Phase 6: Refine NF vs RO selection against target TDS and multi-pass requirements."""
         if self.state["primary_config_draft"] == "NF":
             est_nf_tds = self.data.feed_tds * (1 - 0.6)
             
@@ -381,6 +414,7 @@ class ProcessRecommendationEngine:
                                f"NF offers higher recovery at lower operating pressure for this feed.")
 
     def _phase_7_final_assembly(self):
+        """Phase 7: Assemble final primary and alternate technology train recommendations."""
         draft = self.state["primary_config_draft"]
         uf = self.state.get("uf_integration", False)
         tp = self.state["second_pass_required"]

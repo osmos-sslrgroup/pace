@@ -13,7 +13,7 @@ class MembraneDatabase:
             "manufacturer": "DuPont",
             "active_area_m2": 37.2, # 400 sq ft
             "permeability_A": 2.5,  # L/m2/h/bar (approximate)
-            "permeability_B": 1.5e-7, # m/s (TDS passage)
+            "permeability_B": 3.37e-08, # m/s (TDS passage)
             "feed_spacer_mil": 34,
             "max_pressure_bar": 41.0,
             "max_feed_flow_m3h": 15.9,
@@ -25,9 +25,9 @@ class MembraneDatabase:
             "sigma": {
                 "Ca": 0.996,
                 "Mg": 0.996,
-                "Na": 0.985,
+                "Na": 0.9995,
                 "K": 0.980,
-                "Cl": 0.985,
+                "Cl": 0.9995,
                 "SO4": 0.998,
                 "HCO3": 0.980,
                 "Ba": 0.997,
@@ -45,7 +45,7 @@ class MembraneDatabase:
             "manufacturer": "DuPont",
             "active_area_m2": 37.2,
             "permeability_A": 1.1,  # Lower A for SWRO
-            "permeability_B": 4.5e-8, # Lower B (higher rejection)
+            "permeability_B": 1.12e-08, # Lower B (higher rejection)
             "feed_spacer_mil": 28,
             "max_pressure_bar": 82.7,
             "max_feed_flow_m3h": 17.0,
@@ -56,9 +56,9 @@ class MembraneDatabase:
             "sigma": {
                 "Ca": 0.999,
                 "Mg": 0.999,
-                "Na": 0.996,
+                "Na": 0.9995,
                 "K": 0.994,
-                "Cl": 0.996,
+                "Cl": 0.9995,
                 "SO4": 0.999,
                 "HCO3": 0.994,
                 "Ba": 0.999,
@@ -76,7 +76,7 @@ class MembraneDatabase:
             "manufacturer": "Hydranautics",
             "active_area_m2": 37.2,
             "permeability_A": 2.8,
-            "permeability_B": 1.2e-7,
+            "permeability_B": 2.14e-08,
             "feed_spacer_mil": 34,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 17.0,
@@ -87,9 +87,9 @@ class MembraneDatabase:
             "sigma": {
                 "Ca": 0.997,
                 "Mg": 0.997,
-                "Na": 0.990,
+                "Na": 0.9995,
                 "K": 0.985,
-                "Cl": 0.990,
+                "Cl": 0.9995,
                 "SO4": 0.998,
                 "HCO3": 0.985,
                 "Ba": 0.998,
@@ -109,8 +109,8 @@ class MembraneDatabase:
             "size": "4x40",
             "active_area_m2": 9.3,         # 100 ft2
             "permeability_A": 3.39,        # LMH/bar — derived from test conditions
-            "permeability_B": 5.3e-8,      # m/s — derived from 99.6% rejection at test conditions
-            "feed_spacer_mil": 34,         # typical for 4040 BWRO
+            "permeability_B": 3.35e-08,      # m/s — derived from 99.6% rejection at test conditions
+            "feed_spacer_mil": 31,         # typical for 4040 BWRO
             "max_pressure_bar": 41.4,      # 600 psi
             "max_feed_flow_m3h": 4.09,     # 18 gpm
             "min_conc_flow_m3h": 0.91,     # 4 gpm
@@ -156,9 +156,9 @@ class MembraneDatabase:
             "sigma": {
                 "Ca": 0.997,
                 "Mg": 0.997,
-                "Na": 0.988,
+                "Na": 0.9995,
                 "K": 0.983,
-                "Cl": 0.988,
+                "Cl": 0.9995,
                 "SO4": 0.998,
                 "HCO3": 0.983,
                 "Ba": 0.998,
@@ -176,8 +176,8 @@ class MembraneDatabase:
             "manufacturer": "Permionics",
             "active_area_m2": 37.2,
             "permeability_A": 3.367,
-            "permeability_B": 3.89e-08,
-            "feed_spacer_mil": 34,
+            "permeability_B": 2.40e-08,
+            "feed_spacer_mil": 31,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 16.0,
             "min_conc_flow_m3h": 4.5,
@@ -185,7 +185,7 @@ class MembraneDatabase:
             "length_m": 1.016,
             "diameter_m": 0.201,
             "nominal_rejection": 0.997,
-            "min_rejection": 0.9960000000000001,
+            "min_rejection": 0.996,
             "flags": ['LF'],
             "max_temp_c": 45.0,
             "ph_range": [2.0, 11.0],
@@ -214,9 +214,9 @@ class MembraneDatabase:
             "sigma": {
                 "Ca": 0.997,
                 "Mg": 0.997,
-                "Na": 0.988,
+                "Na": 0.9995,
                 "K": 0.983,
-                "Cl": 0.988,
+                "Cl": 0.9995,
                 "SO4": 0.998,
                 "HCO3": 0.983,
                 "Ba": 0.998,
@@ -234,8 +234,8 @@ class MembraneDatabase:
             "manufacturer": "Permionics",
             "active_area_m2": 37.2,
             "permeability_A": 3.213,
-            "permeability_B": 3.72e-08,
-            "feed_spacer_mil": 34,
+            "permeability_B": 2.30e-08,
+            "feed_spacer_mil": 31,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 16.0,
             "min_conc_flow_m3h": 4.5,
@@ -243,7 +243,7 @@ class MembraneDatabase:
             "length_m": 1.016,
             "diameter_m": 0.201,
             "nominal_rejection": 0.997,
-            "min_rejection": 0.9960000000000001,
+            "min_rejection": 0.996,
             "flags": [],
             "max_temp_c": 45.0,
             "ph_range": [2.0, 11.0],
@@ -272,9 +272,9 @@ class MembraneDatabase:
             "sigma": {
                 "Ca": 0.997,
                 "Mg": 0.997,
-                "Na": 0.988,
+                "Na": 0.9995,
                 "K": 0.983,
-                "Cl": 0.988,
+                "Cl": 0.9995,
                 "SO4": 0.998,
                 "HCO3": 0.983,
                 "Ba": 0.998,
@@ -292,7 +292,7 @@ class MembraneDatabase:
             "manufacturer": "Permionics",
             "active_area_m2": 40.9,
             "permeability_A": 3.482,
-            "permeability_B": 4.03e-08,
+            "permeability_B": 2.54e-08,
             "feed_spacer_mil": 28,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 16.0,
@@ -301,7 +301,7 @@ class MembraneDatabase:
             "length_m": 1.016,
             "diameter_m": 0.201,
             "nominal_rejection": 0.997,
-            "min_rejection": 0.9960000000000001,
+            "min_rejection": 0.996,
             "flags": ['LPM'],
             "max_temp_c": 45.0,
             "ph_range": [2.0, 11.0],
@@ -330,9 +330,9 @@ class MembraneDatabase:
             "sigma": {
                 "Ca": 0.997,
                 "Mg": 0.997,
-                "Na": 0.988,
+                "Na": 0.9995,
                 "K": 0.983,
-                "Cl": 0.988,
+                "Cl": 0.9995,
                 "SO4": 0.998,
                 "HCO3": 0.983,
                 "Ba": 0.998,
@@ -350,7 +350,7 @@ class MembraneDatabase:
             "manufacturer": "Permionics",
             "active_area_m2": 37.2,
             "permeability_A": 3.359,
-            "permeability_B": 3.89e-08,
+            "permeability_B": 2.40e-08,
             "feed_spacer_mil": 31,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 16.0,
@@ -359,7 +359,7 @@ class MembraneDatabase:
             "length_m": 1.016,
             "diameter_m": 0.201,
             "nominal_rejection": 0.997,
-            "min_rejection": 0.9960000000000001,
+            "min_rejection": 0.996,
             "flags": [],
             "max_temp_c": 45.0,
             "ph_range": [2.0, 11.0],
@@ -388,9 +388,9 @@ class MembraneDatabase:
             "sigma": {
                 "Ca": 0.997,
                 "Mg": 0.997,
-                "Na": 0.988,
+                "Na": 0.9995,
                 "K": 0.983,
-                "Cl": 0.988,
+                "Cl": 0.9995,
                 "SO4": 0.998,
                 "HCO3": 0.983,
                 "Ba": 0.998,
@@ -408,8 +408,8 @@ class MembraneDatabase:
             "manufacturer": "Permionics",
             "active_area_m2": 37.2,
             "permeability_A": 3.213,
-            "permeability_B": 2.48e-08,
-            "feed_spacer_mil": 34,
+            "permeability_B": 1.42e-08,
+            "feed_spacer_mil": 31,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 16.0,
             "min_conc_flow_m3h": 4.5,
@@ -446,9 +446,9 @@ class MembraneDatabase:
             "sigma": {
                 "Ca": 0.997,
                 "Mg": 0.997,
-                "Na": 0.988,
+                "Na": 0.9995,
                 "K": 0.983,
-                "Cl": 0.988,
+                "Cl": 0.9995,
                 "SO4": 0.998,
                 "HCO3": 0.983,
                 "Ba": 0.998,
@@ -466,8 +466,8 @@ class MembraneDatabase:
             "manufacturer": "Permionics",
             "active_area_m2": 37.2,
             "permeability_A": 3.52,
-            "permeability_B": 2.71e-08,
-            "feed_spacer_mil": 34,
+            "permeability_B": 1.55e-08,
+            "feed_spacer_mil": 31,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 16.0,
             "min_conc_flow_m3h": 4.5,
@@ -504,9 +504,9 @@ class MembraneDatabase:
             "sigma": {
                 "Ca": 0.997,
                 "Mg": 0.997,
-                "Na": 0.988,
+                "Na": 0.9995,
                 "K": 0.983,
-                "Cl": 0.988,
+                "Cl": 0.9995,
                 "SO4": 0.998,
                 "HCO3": 0.983,
                 "Ba": 0.998,
@@ -524,8 +524,8 @@ class MembraneDatabase:
             "manufacturer": "Permionics",
             "active_area_m2": 37.2,
             "permeability_A": 3.229,
-            "permeability_B": 4.99e-08,
-            "feed_spacer_mil": 34,
+            "permeability_B": 3.19e-08,
+            "feed_spacer_mil": 31,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 16.0,
             "min_conc_flow_m3h": 4.5,
@@ -562,9 +562,9 @@ class MembraneDatabase:
             "sigma": {
                 "Ca": 0.997,
                 "Mg": 0.997,
-                "Na": 0.988,
+                "Na": 0.9995,
                 "K": 0.983,
-                "Cl": 0.988,
+                "Cl": 0.9995,
                 "SO4": 0.998,
                 "HCO3": 0.983,
                 "Ba": 0.998,
@@ -582,7 +582,7 @@ class MembraneDatabase:
             "manufacturer": "Permionics",
             "active_area_m2": 37.5,
             "permeability_A": 1.075,
-            "permeability_B": 1.76e-08,
+            "permeability_B": 9.47e-09,
             "feed_spacer_mil": 28,
             "max_pressure_bar": 55.2,
             "max_feed_flow_m3h": 16.0,
@@ -620,9 +620,9 @@ class MembraneDatabase:
             "sigma": {
                 "Ca": 0.997,
                 "Mg": 0.997,
-                "Na": 0.995,
+                "Na": 0.9995,
                 "K": 0.983,
-                "Cl": 0.995,
+                "Cl": 0.9995,
                 "SO4": 0.998,
                 "HCO3": 0.983,
                 "Ba": 0.998,
@@ -640,7 +640,7 @@ class MembraneDatabase:
             "manufacturer": "Permionics",
             "active_area_m2": 37.2,
             "permeability_A": 1.183,
-            "permeability_B": 1.93e-08,
+            "permeability_B": 9.71e-09,
             "feed_spacer_mil": 34,
             "max_pressure_bar": 55.2,
             "max_feed_flow_m3h": 16.0,
@@ -678,9 +678,9 @@ class MembraneDatabase:
             "sigma": {
                 "Ca": 0.997,
                 "Mg": 0.997,
-                "Na": 0.995,
+                "Na": 0.9995,
                 "K": 0.983,
-                "Cl": 0.995,
+                "Cl": 0.9995,
                 "SO4": 0.998,
                 "HCO3": 0.983,
                 "Ba": 0.998,
@@ -698,7 +698,7 @@ class MembraneDatabase:
             "manufacturer": "Permionics",
             "active_area_m2": 37.2,
             "permeability_A": 1.297,
-            "permeability_B": 2.12e-08,
+            "permeability_B": 1.13e-08,
             "feed_spacer_mil": 28,
             "max_pressure_bar": 55.2,
             "max_feed_flow_m3h": 16.0,
@@ -736,9 +736,9 @@ class MembraneDatabase:
             "sigma": {
                 "Ca": 0.997,
                 "Mg": 0.997,
-                "Na": 0.995,
+                "Na": 0.9995,
                 "K": 0.983,
-                "Cl": 0.995,
+                "Cl": 0.9995,
                 "SO4": 0.998,
                 "HCO3": 0.983,
                 "Ba": 0.998,
@@ -1137,18 +1137,76 @@ class MembraneDatabase:
         },
     }
 
+    # Verified manufacturer datasheet ratings
+    VERIFIED_DATASHEETS = {
+        "BW30-400": {
+            "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
+            "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 40.0,
+            "nominal_rejection_pct": 99.50, "min_rejection_pct": 99.30, "is_estimate": False
+        },
+        "SW30HRLE-400": {
+            "test_solution": "32,000 ppm NaCl", "test_pressure_psi": 800.0, "test_pressure_bar": 55.16,
+            "test_recovery_pct": 8.0, "test_temp_c": 25.0, "permeate_flow_m3d": 28.4,
+            "nominal_rejection_pct": 99.80, "min_rejection_pct": 99.65, "is_estimate": False
+        },
+        "CPA5-LD": {
+            "test_solution": "1,500 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
+            "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 41.6,
+            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.50, "is_estimate": False
+        },
+        "HPA-4040": {
+            "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
+            "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 9.1,
+            "nominal_rejection_pct": 99.60, "min_rejection_pct": 99.40, "is_estimate": False
+        },
+        "HPA-RO-8040": {
+            "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
+            "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 39.7,
+            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.60, "is_estimate": False
+        },
+        "HPA-RO-8040-LF-WW": {
+            "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
+            "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 38.0,
+            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.60, "is_estimate": False
+        },
+        "HPARO-8040-BW-400": {
+            "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
+            "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 40.0,
+            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.60, "is_estimate": False
+        },
+        "SWRO-8040-400": {
+            "test_solution": "32,000 ppm NaCl", "test_pressure_psi": 800.0, "test_pressure_bar": 55.16,
+            "test_recovery_pct": 8.0, "test_temp_c": 25.0, "permeate_flow_m3d": 24.6,
+            "nominal_rejection_pct": 99.75, "min_rejection_pct": 99.50, "is_estimate": False
+        },
+        "SWRO-FR-8040-400": {
+            "test_solution": "32,000 ppm NaCl", "test_pressure_psi": 800.0, "test_pressure_bar": 55.16,
+            "test_recovery_pct": 8.0, "test_temp_c": 25.0, "permeate_flow_m3d": 22.7,
+            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.50, "is_estimate": False
+        },
+        "SWRO-HLE-8040-400": {
+            "test_solution": "32,000 ppm NaCl", "test_pressure_psi": 800.0, "test_pressure_bar": 55.16,
+            "test_recovery_pct": 8.0, "test_temp_c": 25.0, "permeate_flow_m3d": 26.5,
+            "nominal_rejection_pct": 99.75, "min_rejection_pct": 99.50, "is_estimate": False
+        },
+    }
 
     @classmethod
     def get_ro_membrane(cls, name: str) -> Dict[str, Any]:
+        """Retrieve and normalize an RO/NF membrane record by model name."""
+        catalog_key = name if name in cls.RO_MEMBRANES else "BW30-400"
         raw_mem = cls.RO_MEMBRANES.get(name, cls.RO_MEMBRANES["BW30-400"])
-        return cls._normalize_membrane(raw_mem)
+        return cls._normalize_membrane(raw_mem, catalog_key=catalog_key)
 
     @classmethod
-    def _normalize_membrane(cls, raw_mem: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_membrane(cls, raw_mem: Dict[str, Any], catalog_key: str = "") -> Dict[str, Any]:
         """
         Normalizes any catalog element into the 8.1 Membrane Datasheet Schema shape.
         """
         mem = raw_mem.copy()
+        model_name = mem.get("model") or catalog_key
+        if model_name and not mem.get("model"):
+            mem["model"] = model_name
         
         # 1. membrane_class
         mem["membrane_class"] = mem.get("type", "BWRO")
@@ -1188,14 +1246,55 @@ class MembraneDatabase:
         }
         mem["saturation_limits"] = mem.get("saturation_limits") or default_sat
 
+        # 6. Spacer thickness and hydraulic diameter (CHANGE 15)
+        spacer_mil = mem.get("feed_spacer_mil", 31)
+        t_fs = spacer_mil * 2.54e-5
+        eps = 0.90
+        dh_calc = (4.0 * eps) / ((2.0 / t_fs) + ((1.0 - eps) * 8.0 / t_fs))
+        mem.setdefault("hydraulic_diameter_m", round(dh_calc, 6))
+
+        # 7. Datasheet block (CHANGE 6)
+        is_swro = mem.get("type") == "SWRO" or "SW" in mem.get("description", "")
+        test_sol = "32,000 ppm NaCl" if is_swro else "2,000 ppm NaCl"
+        test_p_bar = 55.16 if is_swro else 15.51
+        test_p_psi = 800.0 if is_swro else 225.0
+        nom_rej = mem.get("nominal_rejection")
+        if nom_rej is None:
+            nom_rej = 0.997 if not is_swro else 0.998
+        min_rej = mem.get("min_rejection")
+        if min_rej is None:
+            min_rej = 0.995 if not is_swro else 0.997
+
+        if mem.get("datasheet"):
+            pass
+        elif model_name in cls.VERIFIED_DATASHEETS:
+            mem["datasheet"] = dict(cls.VERIFIED_DATASHEETS[model_name])
+        else:
+            rec_est = 8.0 if is_swro else 15.0
+            default_datasheet = {
+                "test_solution": test_sol,
+                "test_pressure_bar": test_p_bar,
+                "test_pressure_psi": test_p_psi,
+                "test_recovery_pct": rec_est,
+                "test_temp_c": 25.0,
+                "nominal_rejection_pct": round(nom_rej * 100.0, 2),
+                "min_rejection_pct": round(min_rej * 100.0, 2),
+                "permeate_flow_m3d": round((mem.get("max_feed_flow_m3h") or 16.0) * (rec_est / 100.0) * 24.0, 1),
+                "is_estimate": True,
+                "permeate_flow_is_estimate": True,
+            }
+            mem["datasheet"] = default_datasheet
+
         return mem
 
     @classmethod
     def get_uf_module(cls, name: str) -> Dict[str, Any]:
+        """Retrieve a UF module record by model name with default fallback."""
         return cls.UF_MODULES.get(name, cls.UF_MODULES["PERMA-UF-i0875s40"])
 
     @classmethod
     def list_ro_membranes(cls):
+        """Return a summary listing of all catalog RO/NF membranes and their datasheet specifications."""
         return [
             {
                 "id": k,
@@ -1211,11 +1310,13 @@ class MembraneDatabase:
                 "max_recovery_pct": v.get("max_recovery_pct"),
                 "length_m": v.get("length_m"),
                 "diameter_m": v.get("diameter_m"),
-                "material": v.get("material", "Polyamide Composite")
+                "material": v.get("material", "Polyamide Composite"),
+                "datasheet": cls.get_ro_membrane(k).get("datasheet", {})
             }
             for k, v in cls.RO_MEMBRANES.items()
         ]
 
     @classmethod
     def list_uf_modules(cls):
+        """Return a list of available UF modules with ID, name, and surface area."""
         return [{"id": k, "name": k, "area": v["membrane_area_m2"]} for k, v in cls.UF_MODULES.items()]

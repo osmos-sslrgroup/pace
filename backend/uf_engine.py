@@ -9,17 +9,19 @@ from membrane_database import MembraneDatabase
 
 class UFEngine:
     def __init__(self):
+        """Initialize UFEngine for ultrafiltration sizing and hydraulic verification."""
         pass
         
     def _viscosity_correction(self, temp_c: float) -> float:
         """
         Calculates dynamic viscosity correction factor relative to 20°C.
-        Uses the empirical Arrhenius equation of state to determine viscosity 
-        changes as a function of temperature (K).
+        Uses the Vogel equation of state:
+        mu = 2.414e-5 * 10^(247.8 / (T_K - 140.0))
         """
-        # Dynamic viscosity of water (Pa.s)
-        mu_T = 1.0e-3 * math.exp(1808.0 / (temp_c + 273.15) - 6.354)
-        mu_20 = 1.0e-3 * math.exp(1808.0 / (20.0 + 273.15) - 6.354)
+        t_k = temp_c + 273.15
+        mu_T = 2.414e-5 * math.pow(10.0, 247.8 / max(1.0, t_k - 140.0))
+        t_20_k = 20.0 + 273.15
+        mu_20 = 2.414e-5 * math.pow(10.0, 247.8 / max(1.0, t_20_k - 140.0))
         return mu_T / mu_20
 
     def simulate_uf(self, 
@@ -91,6 +93,7 @@ class UFEngine:
         warnings = []
         
         def add_warning(name, unit, limit, est):
+            """Append a pass/fail compliance check entry to the UF warnings list."""
             warnings.append({
                 "type": name,
                 "unit": unit,
