@@ -4,11 +4,150 @@ Implements Solution-Diffusion and Spiegler-Kedem mass transport models.
 """
 
 import math
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from membrane_database import MembraneDatabase
+
+# (molar mass, |charge|) used for permeate/reject charge balance — shared by RO and NF
+CATIONS_MW_Z = {"Ca": (40.078, 2), "Mg": (24.305, 2), "Na": (22.990, 1),
+                "K": (39.098, 1), "Ba": (137.327, 2), "Sr": (87.62, 2),
+                "NH4": (18.04, 1), "Fe": (55.845, 2), "Mn": (54.938, 2),
+                "Al": (26.982, 3)}
+ANIONS_MW_Z = {"Cl": (35.45, 1), "SO4": (96.06, 2), "HCO3": (61.017, 1),
+               "CO3": (60.009, 2), "NO3": (62.00, 1), "F": (18.998, 1),
+               "PO4": (94.97, 3), "Br": (79.904, 1)}
+CARBONATE = ("HCO3", "CO3", "CO2")
+
+# Species excluded from TDS (Toray DS2 basis: TDS = all ions + SiO2 + B + CO3; CO2 excluded)
+TDS_EXCLUDE = ("CO2",)
+
+
+# ---------------------------------------------------------------------------
+# Carbonate chemistry (activity-corrected, matches Toray DS2 to ~2-5 %)
+# ---------------------------------------------------------------------------
+def carbonic_pk1(temp_c: float) -> float:
+    """pK1 of carbonic acid (Harned & Davis 1943). 6.35 at 25 C."""
+    t = temp_c + 273.15
+    return 3404.71 / t + 0.032786 * t - 14.8435
+
+
+def carbonic_pk2(temp_c: float) -> float:
+    """pK2 of carbonic acid (Harned & Scholes 1941). 10.33 at 25 C."""
+    t = temp_c + 273.15
+    return 2902.39 / t + 0.02379 * t - 6.498
+
+
+def water_pkw(temp_c: float) -> float:
+    """pKw of water. 14.00 at 25 C."""
+    t = temp_c + 273.15
+    return 4470.99 / t - 6.0875 + 0.01706 * t
+
+
+def ionic_strength(ions: Dict[str, float]) -> float:
+    """Ionic strength (mol/L) from an ion dict in mg/L."""
+    i = 0.0
+    for tbl in (CATIONS_MW_Z, ANIONS_MW_Z):
+        for ion, (mw, z) in tbl.items():
+            c = ions.get(ion, 0.0)
+            if c > 0:
+                i += (c / 1000.0 / mw) * z * z
+    return 0.5 * i
+
+
+def log_gamma(z: int, I: float, temp_c: float, a_ang: float = 4.5) -> float:
+    """Extended Debye-Hueckel (ion size 4.5 A for HCO3/CO3); valid to seawater I~0.7."""
+    A = 0.4883 + 8.074e-4 * temp_c
+    Bd = 0.3241 + 1.600e-4 * temp_c
+    sI = math.sqrt(max(I, 0.0))
+    return -A * z * z * sI / (1.0 + Bd * a_ang * sI)
+
+
+def split_carbonate(ions: Dict[str, float], ph: float, temp_c: float) -> Dict[str, float]:
+    """
+    Add free CO2 and CO3 (mg/L) to a feed ion dict from HCO3 and the measured pH
+    (pH = -log aH, activity-corrected).  HCO3 is kept as the HCO3 ion.
+        [CO2] = aH * g1 * [HCO3] / K1
+        [CO3] = K2 * g1 * [HCO3] / (aH * g2)
+    Call this on the RO feed BEFORE simulate_system.
+    """
+    out = dict(ions)
+    hco3 = out.get("HCO3", 0.0)
+    if hco3 <= 0:
+        out.setdefault("CO2", 0.0)
+        out.setdefault("CO3", 0.0)
+        return out
+    I = ionic_strength(out)
+    g1 = 10 ** log_gamma(1, I, temp_c)
+    g2 = 10 ** log_gamma(2, I, temp_c)
+    aH = 10 ** (-ph)
+    K1 = 10 ** (-carbonic_pk1(temp_c))
+    K2 = 10 ** (-carbonic_pk2(temp_c))
+    m_hco3 = hco3 / 61.017
+    out["CO2"] = aH * g1 * m_hco3 / K1 * 44.01
+    out["CO3"] = K2 * g1 * m_hco3 / (aH * g2) * 60.009
+    return out
+
+
+def carbonate_ph(hco3_mg_l: float, co2_mg_l: float, temp_c: float, I: float = 0.0) -> Optional[float]:
+    """pH (activity scale) from HCO3 and CO2: pH = pK1 + log10(g1*[HCO3]/[CO2])."""
+    if hco3_mg_l <= 0 or co2_mg_l <= 0:
+        return None
+    g1 = 10 ** log_gamma(1, I, temp_c)
+    return carbonic_pk1(temp_c) + math.log10(g1 * (hco3_mg_l / 61.017) / (co2_mg_l / 44.01))
+
+
+def respeciate_carbonate(ions: Dict[str, float], ct_mmol: float, alk_meq: float,
+                         temp_c: float) -> Dict[str, float]:
+    """
+    Re-split total carbonate (CT, mmol/L) into CO2 / HCO3 / CO3 for a given
+    carbonate alkalinity (HCO3 + 2 CO3, meq/L) by solving for pH.
+    Used on the reject of every element (CO2 builds up, pH rises, as in DS2).
+    """
+    out = dict(ions)
+    if ct_mmol <= 0:
+        return out
+    I = ionic_strength(out)
+    g1 = 10 ** log_gamma(1, I, temp_c)
+    g2 = 10 ** log_gamma(2, I, temp_c)
+    K1 = 10 ** (-carbonic_pk1(temp_c))
+    K2 = 10 ** (-carbonic_pk2(temp_c))
+
+    def species(ph):
+        aH = 10 ** (-ph)
+        r_co2 = aH * g1 / K1           # CO2 / HCO3 (molar)
+        r_co3 = K2 * g1 / (aH * g2)    # CO3 / HCO3
+        hco3 = ct_mmol / (1.0 + r_co2 + r_co3)
+        return hco3 * r_co2, hco3, hco3 * r_co3
+
+    lo, hi = 2.0, 12.5
+    for _ in range(80):                # alkalinity rises monotonically with pH
+        mid = 0.5 * (lo + hi)
+        co2, hco3, co3 = species(mid)
+        if hco3 + 2 * co3 < alk_meq:
+            lo = mid
+        else:
+            hi = mid
+    co2, hco3, co3 = species(0.5 * (lo + hi))
+    out["CO2"], out["HCO3"], out["CO3"] = co2 * 44.01, hco3 * 61.017, co3 * 60.009
+    return out
+
+
+def carbonate_totals(ions: Dict[str, float]):
+    """(CT mmol/L, carbonate alkalinity meq/L) of an ion dict."""
+    co2 = ions.get("CO2", 0.0) / 44.01
+    hco3 = ions.get("HCO3", 0.0) / 61.017
+    co3 = ions.get("CO3", 0.0) / 60.009
+    return co2 + hco3 + co3, hco3 + 2 * co3
+
+
+def charge_balance(ions: Dict[str, float]):
+    """Return (cation meq/L, anion meq/L)."""
+    cat = sum(ions.get(i, 0.0) / mw * z for i, (mw, z) in CATIONS_MW_Z.items())
+    an = sum(ions.get(i, 0.0) / mw * z for i, (mw, z) in ANIONS_MW_Z.items())
+    return cat, an
 
 class ROEngine:
     def __init__(self):
+        """Initialize ROEngine with molar mass definitions and transport constants."""
         # Universal constants
         self.R_gas = 0.08314 # L*bar/(mol*K)
         
@@ -17,7 +156,8 @@ class ROEngine:
             "Cl": 35.45, "SO4": 96.06, "HCO3": 61.0168, "Ba": 137.327,
             "Sr": 87.62, "F": 18.998, "SiO2": 60.08, "B": 10.81,
             "NO3": 62.00, "PO4": 94.97, "NH4": 18.04,
-            "Al": 26.982, "Fe": 55.845, "Mn": 54.938
+            "Al": 26.982, "Fe": 55.845, "Mn": 54.938, "CO2": 44.01,
+            "CO3": 60.009, "Br": 79.904
         }
         
     def _calculate_osmotic_pressure(self, ions: Dict[str, float], temp_c: float) -> float:
@@ -36,8 +176,11 @@ class ROEngine:
                 
         # Calculate total TDS to determine dynamic osmotic coefficient (phi)
         tds = sum(ions.values())
-        if tds >= 35000:
-            phi = 0.90
+        if tds >= 70000:
+            phi = 0.93
+        elif tds >= 35000:
+            # Seawater concentrate: phi rises again above ~0.7 mol/kg (NaCl data)
+            phi = 0.90 + ((tds - 35000) / 35000.0) * 0.03
         elif tds > 10000:
             # Interpolate between 10000 (0.93) and 35000 (0.90)
             phi = 0.93 - ((tds - 10000) / 25000.0) * 0.03
@@ -61,6 +204,9 @@ class ROEngine:
         For RO membranes, falls back to the legacy PACE U=2640/3020 values.
         """
         temp_k = temp_c + 273.15
+        if isinstance(E_Aw_over_R, (tuple, list)):
+            # Calibrated two-segment value (below / above 25 C), e.g. from Toray DS2
+            E_Aw_over_R = E_Aw_over_R[0] if temp_c <= 25.0 else E_Aw_over_R[1]
         if E_Aw_over_R is not None:
             # NF-W-02: TCF_A(T) = exp(E_Aw/R × (1/T_ref − 1/T))  — T_ref = 298.15 K
             U = E_Aw_over_R
@@ -68,6 +214,19 @@ class ROEngine:
             # Legacy RO correction factor (U = 2640 for T ≤ 25°C, U = 3020 for T > 25°C)
             U = 2640.0 if temp_c <= 25.0 else 3020.0
         return math.exp(U * (1.0/298.15 - 1.0/temp_k))
+
+    @staticmethod
+    def _calculate_tcf_salt(temp_c: float, E_B_over_R: float = None) -> float:
+        """
+        Temperature Correction Factor for salt permeability B (new).
+        Salt passage rises ~3 %/C. Default E_B/R = 2700 K; override per membrane
+        with "E_B_over_R" in the database once calibrated against Toray DS2.
+        """
+        if isinstance(E_B_over_R, (tuple, list)):
+            # Calibrated two-segment value (below / above 25 C), e.g. from Toray DS2
+            E_B_over_R = E_B_over_R[0] if temp_c <= 25.0 else E_B_over_R[1]
+        U = 2700.0 if E_B_over_R is None else E_B_over_R
+        return math.exp(U * (1.0/298.15 - 1.0/(temp_c + 273.15)))
         
     @staticmethod
     def _water_viscosity(temp_c: float) -> float:
@@ -145,8 +304,8 @@ class ROEngine:
         # Sherwood number Sh: 0.050 * Re^0.875 * Sc^0.25
         Sh = 0.050 * math.pow(Re, 0.875) * math.pow(Sc, 0.25)
         
-        # Mass transfer coefficient k (m/s)
-        k = Sh * D_AB / d_h
+        # Mass transfer coefficient k (m/s); "k_factor" calibrates beta to Toray DS2
+        k = Sh * D_AB / d_h * membrane.get("k_factor", 1.0)
         
         # Water flux Jv in m/s
         jv_ms = (flux_lmh / 1000.0) / 3600.0
@@ -189,12 +348,155 @@ class ROEngine:
         
         friction_factor = 6.23 * math.pow(Re, -0.3)
         dp_pa = friction_factor * (length_m / d_h) * (rho * v**2 / 2.0)
-        dp_bar = dp_pa / 100000.0
+        dp_bar = dp_pa / 100000.0 * membrane.get("dp_factor", 1.0)   # calibrated to Toray DS2
         
         return max(0.001, min(dp_bar, 1.5))
 
 
-    def simulate_element(self, 
+    def _ion_transport(self, feed_ions: Dict[str, float], flux_lmh: float, beta_calc: float,
+                       r: float, B_eff: float, sigmas: Dict[str, float], is_nf: bool,
+                       nf_ps_dict: Dict[str, float], temp_c: float = 25.0,
+                       ion_E: Dict[str, Any] = None,
+                       pi_wall: float = 0.0, membrane: Dict[str, Any] = None):
+        """
+        Per-ion Spiegler-Kedem transport with film-theory CP and element mass balance.
+        Returns (permeate_ions, membrane_surface_ions) in mg/L.
+
+        RO: P_s,i = B * (1 - sigma_i) / (1 - sigma_ref), sigma_ref = sigma(Na).
+            => passage_i ~ (1 - sigma_i). sigma values come from the database
+               (sigma_i = 1 - f_i*(1 - sigma_ref)); they are NOT ion rejections.
+        """
+        perm, surface = {}, {}
+        membrane = membrane or {}
+        # Carbonate mode: if the feed carries CO2 (split_carbonate was called), the
+        # permeate HCO3/CO3/pH follow from CO2 equilibrium + electroneutrality
+        # (Toray DS2 behaviour); otherwise HCO3 is transported like other ions.
+        carb_mode = (not is_nf) and feed_ions.get("CO2", 0) > 0
+        # Salinity dependence of salt passage (calibrated vs Toray DS2):
+        # charged ions share one factor (pi_wall / 1 bar) ^ n  ("salt_salinity_n"["Na"]);
+        # Toray DS2 keeps the ratio of every strong ion to Na constant from 500 to
+        # 45,000 mg/L, while neutral SiO2 and B(OH)3 do not follow salinity.
+        sal_n = membrane.get("salt_salinity_n") or {}
+        pic = sal_n.get("pi_c", 0.0)          # offset (bar): flattens the curve at low TDS
+        sal_x = (max(pi_wall, 0.0) + pic) / (1.0 + pic)
+        sal_fac = max(sal_x, 1e-3) ** sal_n.get("Na", 0.0) if (sal_n and not is_nf) else 1.0
+        # pH dependence of salt passage above the reference pH (Toray DS2: strong-ion
+        # passage rises ~25 % from pH 7.5 to 8.5): exp(k * max(0, pH - pH_ref))
+        ph_k = membrane.get("salt_ph_k")
+        if ph_k and not is_nf and feed_ions.get("CO2", 0) > 0 and feed_ions.get("HCO3", 0) > 0:
+            ph_loc = carbonate_ph(feed_ions["HCO3"], feed_ions["CO2"], temp_c, ionic_strength(feed_ions))
+            if ph_loc is not None and ph_loc > ph_k[1]:
+                sal_fac *= math.exp(ph_k[0] * (ph_loc - ph_k[1]))
+        # FIX: reference sigma read from the database (was hard-coded 0.9995)
+        ref_sigma = sigmas.get("Na", 0.9995)
+        jv_mh = flux_lmh / 1000.0
+        for ion, feed_c in feed_ions.items():
+            if feed_c <= 0:
+                perm[ion] = 0.0
+                surface[ion] = 0.0
+                continue
+
+            if (ion == "CO3" and not is_nf) or (carb_mode and ion == "HCO3"):
+                # CO3 in the permeate is set by carbonate equilibrium afterwards
+                perm[ion] = 0.0
+                surface[ion] = feed_c * beta_calc
+                continue
+
+            sigma = sigmas.get(ion, ref_sigma if not is_nf else 0.347)
+
+            # Ion-specific temperature behaviour relative to Na (calibrated vs Toray DS2):
+            # (1 - sigma_i) is scaled by exp[dE_i/R * (1/298.15 - 1/T)]
+            if ion_E and ion in ion_E and not is_nf and ion != "Na" and sigma > 0:
+                e = ion_E[ion]
+                e = e[0] if temp_c <= 25.0 else e[1]
+                k_t = math.exp(e * (1.0/298.15 - 1.0/(temp_c + 273.15)))
+                sigma = max(0.0, 1.0 - (1.0 - sigma) * k_t)
+
+            if is_nf:
+                P_s_ms = nf_ps_dict.get(ion, 5.80e-7)
+            elif ion == "Na":
+                # Na is the reference ion (B fitted to NaCl); Cl has its own factor
+                P_s_ms = B_eff * sal_fac
+                sigma = max(0.0, 1.0 - (1.0 - sigma) * sal_fac)
+            else:
+                P_s_ms = B_eff * (1.0 - sigma) / max(1e-6, 1.0 - ref_sigma)
+                if ion in CATIONS_MW_Z or ion in ANIONS_MW_Z:
+                    P_s_ms *= sal_fac
+                    # keep passage proportional to (1 - sigma): scale sigma too
+                    sigma = max(0.0, 1.0 - (1.0 - sigma) * sal_fac)
+                elif ion in sal_n and sigma > 0:
+                    # neutral species (SiO2, B) have their own salinity exponent
+                    f_n = max(sal_x, 1e-3) ** sal_n[ion]
+                    P_s_ms *= f_n
+                    sigma = max(0.0, 1.0 - (1.0 - sigma) * f_n)
+            P_s_mh = P_s_ms * 3600.0
+
+            # Spiegler-Kedem true rejection
+            if sigma <= 0.0:
+                R_true = 0.0                         # dissolved gas (CO2)
+            elif jv_mh > 0 and P_s_mh > 0:
+                exp_val = math.exp(-(jv_mh * (1 - sigma)) / P_s_mh)
+                R_true = 1.0 - (1 - sigma) / (1 - sigma * exp_val)
+            else:
+                R_true = 0.0
+
+            denom = R_true + beta_calc * (1.0 - R_true)
+            F_factor = (beta_calc * (1.0 - R_true)) / denom if denom > 0 else 0.0
+            perm[ion] = feed_c * (F_factor * (1.0 + r)) / (1.0 + F_factor * r)
+            bulk_c = feed_c * (1.0 + r) / (1.0 + F_factor * r)
+            surface[ion] = bulk_c * beta_calc / denom if denom > 0 else bulk_c * beta_calc
+
+        if carb_mode:
+            perm = self._permeate_carbonate(perm, temp_c)
+        return perm, surface
+
+    @staticmethod
+    def _permeate_carbonate(perm: Dict[str, float], temp_c: float) -> Dict[str, float]:
+        """
+        Permeate carbonate system: CO2 has passed freely; HCO3, CO3, H+ and OH-
+        are set by equilibrium and electroneutrality with the strong ions:
+            sum(strong cations) + H = sum(strong anions) + HCO3 + 2 CO3 + OH
+        """
+        out = dict(perm)
+        co2 = out.get("CO2", 0.0) / 44.01 / 1000.0          # mol/L
+        strong = {k: v for k, v in out.items() if k not in ("HCO3", "CO3")}
+        cat, an = charge_balance(strong)
+        if an > cat > 0:
+            # Constant per-ion permeabilities do not conserve charge for every feed
+            # mix. A strong-anion excess would otherwise be closed by H+ alone and
+            # give permeate pH ~4 (not seen in DS2). Close it by a proportional
+            # shift (< ~1 % per ion): cations up, anions down.
+            x = (an - cat) / (an + cat)
+            for k in strong:
+                if k in CATIONS_MW_Z:
+                    strong[k] *= (1 + x); out[k] = strong[k]
+                elif k in ANIONS_MW_Z:
+                    strong[k] *= (1 - x); out[k] = strong[k]
+            cat, an = charge_balance(strong)
+        delta = (cat - an) / 1000.0                           # eq/L
+        I = ionic_strength(strong)
+        g1 = 10 ** log_gamma(1, I, temp_c); g2 = 10 ** log_gamma(2, I, temp_c)
+        K1 = 10 ** (-carbonic_pk1(temp_c)); K2 = 10 ** (-carbonic_pk2(temp_c)); Kw = 10 ** (-water_pkw(temp_c))
+
+        def resid(ph):
+            aH = 10 ** (-ph)
+            hco3 = K1 * co2 / (aH * g1)
+            co3 = K2 * hco3 * g1 / (aH * g2)
+            return delta + aH / g1 - hco3 - 2 * co3 - Kw / (aH * g1), hco3, co3
+
+        lo, hi = 2.0, 12.0                                     # resid decreases with pH
+        for _ in range(80):
+            mid = 0.5 * (lo + hi)
+            if resid(mid)[0] > 0:
+                lo = mid
+            else:
+                hi = mid
+        _, hco3, co3 = resid(0.5 * (lo + hi))
+        out["HCO3"] = hco3 * 61.017 * 1000.0
+        out["CO3"] = co3 * 60.009 * 1000.0
+        return out
+
+    def simulate_element(self,
                          feed_flow_m3h: float, 
                          feed_pressure_bar: float,
                          feed_ions: Dict[str, float],
@@ -230,7 +532,15 @@ class ROEngine:
 
         # NF-W-02: membrane-specific TCF for NF; legacy formula for RO
         tcf = self._calculate_tcf(temp_c, E_Aw_over_R)
-        
+        # FIX: salt permeability B was never temperature-corrected (RO only;
+        # NF uses its own Ps table, left unchanged)
+        tcf_b = 1.0 if is_nf else self._calculate_tcf_salt(temp_c, membrane.get("E_B_over_R"))
+        # Osmotic pressure at the membrane wall (feed-side), used for the salinity
+        # dependence of salt passage; updated each iteration with beta
+        pi_feed_elem = self._calculate_osmotic_pressure(feed_ions, temp_c)
+        pi_wall = pi_feed_elem
+        converged = False
+
         # Iterative loop to converge on permeate flow and pressure
         max_iter = 20
         tolerance = 0.001
@@ -252,70 +562,16 @@ class ROEngine:
             # Calculate CP Beta
             beta_actual = self._calculate_cp_beta(flux_lmh, feed_flow_m3h, conc_flow_m3h, temp_c, membrane, feed_ions)
             beta_calc = min(beta_actual, beta_cap) if beta_cap is not None else beta_actual
+            pi_wall = pi_feed_elem * beta_calc
             
             # Ratio r = Qp / (2 * Qc)
             r = current_perm_flow / (2.0 * max(0.001, feed_flow_m3h - current_perm_flow))
             
             # Calculate concentrations self-consistently
-            surface_ions = {}
-            loop_perm_ions = {}
-            
-            for ion, feed_c in feed_ions.items():
-                if feed_c <= 0:
-                    loop_perm_ions[ion] = 0.0
-                    surface_ions[ion] = 0.0
-                    continue
-                    
-                # Reflection coefficient sigma: default 0.9995 for RO (0.347 for NF)
-                # Na+ and Cl- use 0.9995
-                if not is_nf and ion in ("Na", "Cl"):
-                    sigma = sigmas.get(ion, 0.9995)
-                else:
-                    sigma = sigmas.get(ion, 0.9995 if not is_nf else 0.347)
+            loop_perm_ions, surface_ions = self._ion_transport(
+                feed_ions, flux_lmh, beta_calc, r, B * tcf_b, sigmas, is_nf, nf_ps_dict,
+                temp_c, membrane.get("ion_E_over_R"), pi_wall=pi_wall, membrane=membrane)
 
-                # NF-S-01/NF-S-02: use explicit Ps from nf_ps database for NF membranes.
-                # For RO membranes, Ps fitted to datasheet (B is fitted from NaCl test).
-                if is_nf:
-                    # Use database Ps directly; fall back to Group 3 (monovalent) default
-                    P_s_ms = nf_ps_dict.get(ion, 5.80e-7)
-                else:
-                    ref_sigma = 0.9995
-                    if ion in ("Na", "Cl"):
-                        P_s_ms = B
-                    else:
-                        P_s_ms = B * (1.0 - sigma) / max(1e-6, 1.0 - ref_sigma)
-                P_s_mh = P_s_ms * 3600.0
-                
-                jv_mh = flux_lmh / 1000.0
-                
-                # Spiegler-Kedem Rejection (True Rejection)
-                if jv_mh > 0 and P_s_mh > 0:
-                    exponent = - (jv_mh * (1 - sigma)) / P_s_mh
-                    try:
-                        exp_val = math.exp(exponent)
-                        F_i = (1 - sigma) / (1 - sigma * exp_val)
-                        R_true = 1.0 - F_i
-                    except OverflowError:
-                        R_true = sigma
-                else:
-                    R_true = 0.0
-                    
-                # Self-consistent calculations:
-                denom = R_true + beta_calc * (1.0 - R_true)
-                F_factor = (beta_calc * (1.0 - R_true)) / denom if denom > 0 else 0.0
-                
-                # Cp = feed_c * F_factor * (1 + r) / (1 + F_factor * r)
-                Cp = feed_c * (F_factor * (1.0 + r)) / (1.0 + F_factor * r)
-                
-                # Cb = feed_c * (1 + r) / (1 + F_factor * r)
-                bulk_c = feed_c * (1.0 + r) / (1.0 + F_factor * r)
-                
-                # Cm = bulk_c * beta_calc / denom
-                Cm = bulk_c * beta_calc / denom if denom > 0 else bulk_c * beta_calc
-                
-                loop_perm_ions[ion] = Cp
-                surface_ions[ion] = Cm
-                
             # Osmotic pressure at surface and permeate
             pi_surface = self._calculate_osmotic_pressure(surface_ions, temp_c)
             pi_perm = self._calculate_osmotic_pressure(loop_perm_ions, temp_c)
@@ -336,7 +592,12 @@ class ROEngine:
                 ndp = 0
                 
             # Calculate new flux
-            new_flux_lmh = A * ndp * tcf
+            # Water permeability falls with salinity at the membrane wall (seen in
+            # Toray DS2: A at ~40-53 bar osmotic is ~0.55-0.6x A in brackish water).
+            # S = 1 / (1 + (pi_m / pi0)^m); membrane key "A_salinity" = (pi0, m)
+            sal = membrane.get("A_salinity")
+            s_fac = 1.0 / (1.0 + (pi_surface / sal[0]) ** sal[1]) if sal and pi_surface > 0 else 1.0
+            new_flux_lmh = A * ndp * tcf * s_fac
             if max_flux_lmh is not None:
                 new_flux_lmh = min(new_flux_lmh, max_flux_lmh)
                 
@@ -351,17 +612,34 @@ class ROEngine:
                 
             conc_flow_m3h = feed_flow_m3h - current_perm_flow
             
-            # Keep track of the final concentrations
-            perm_ions = loop_perm_ions
-            
             if abs(new_perm_flow - old_perm_flow) < tolerance:
+                converged = True
                 break
-                
+
         # Final flow state
         perm_flow_m3h = current_perm_flow
         flux_lmh = (perm_flow_m3h * 1000.0) / area
         element_recovery = perm_flow_m3h / feed_flow_m3h
-        
+
+        # FIX: recompute concentrations at the FINAL flow (previously the last
+        # loop's concentrations, computed at the old flow, were used -> small
+        # mass-balance error in the reject)
+        beta_actual = self._calculate_cp_beta(flux_lmh, feed_flow_m3h, conc_flow_m3h, temp_c, membrane, feed_ions)
+        beta_calc = min(beta_actual, beta_cap) if beta_cap is not None else beta_actual
+        r = perm_flow_m3h / (2.0 * max(0.001, conc_flow_m3h))
+        perm_ions, _ = self._ion_transport(
+            feed_ions, flux_lmh, beta_calc, r, B * tcf_b, sigmas, is_nf, nf_ps_dict,
+            temp_c, membrane.get("ion_E_over_R"), pi_wall=pi_wall, membrane=membrane)
+
+        # Permeate CO3 from carbonate equilibrium (HCO3 and CO2 come from transport)
+        if (not is_nf and perm_ions.get("HCO3", 0) > 0 and perm_ions.get("CO2", 0) > 0
+                and "CO3" in feed_ions and feed_ions.get("CO2", 0) <= 0):
+            I_p = ionic_strength(perm_ions)
+            ph_p = carbonate_ph(perm_ions["HCO3"], perm_ions["CO2"], temp_c, I_p)
+            g1 = 10 ** log_gamma(1, I_p, temp_c); g2 = 10 ** log_gamma(2, I_p, temp_c)
+            perm_ions["CO3"] = (10 ** (-carbonic_pk2(temp_c)) * g1 * perm_ions["HCO3"] / 61.017
+                                / (10 ** (-ph_p) * g2) * 60.009)
+
         # Final reject concentrations via mass balance
         for ion in feed_ions.keys():
             if feed_flow_m3h > 0 and conc_flow_m3h > 0:
@@ -372,17 +650,19 @@ class ROEngine:
             else:
                 rej_ions[ion] = 0.0
 
+        # Reject: total carbonate and alkalinity are mass-balanced above; re-split
+        # them into CO2/HCO3/CO3 at the reject composition (CO2 builds up, pH rises)
+        if not is_nf and feed_ions.get("CO2", 0) > 0 and conc_flow_m3h > 0:
+            ct, alk = carbonate_totals(rej_ions)
+            rej_ions = respeciate_carbonate(rej_ions, ct, alk, temp_c)
+
         # --- Donnan Electroneutrality Correction for NF (spec Section 3.6) ---
         # NF membranes selectively reject divalent anions (SO4) over monovalent anions (Cl).
         # This creates a charge imbalance in the permeate. Cl- is adjusted to ensure
         # electroneutrality: sum(cation meq) = sum(anion meq including Cl).
         if is_nf and feed_ions.get("Cl", 0) > 0 and perm_flow_m3h > 0:
-            _cat_mw_z = {"Ca": (40.078, 2), "Mg": (24.305, 2), "Na": (22.990, 1),
-                         "K":  (39.098, 1), "Ba": (137.327, 2), "Sr": (87.62, 2),
-                         "NH4": (18.04, 1), "Fe": (55.845, 2), "Mn": (54.938, 2),
-                         "Al": (26.982, 3)}
-            _an_mw_z  = {"SO4": (96.06, 2), "HCO3": (61.017, 1), "NO3": (62.00, 1),
-                         "F":   (18.998, 1), "PO4": (94.97, 3)}
+            _cat_mw_z = CATIONS_MW_Z
+            _an_mw_z = {k: v for k, v in ANIONS_MW_Z.items() if k != "Cl"}
             sum_cat_meq = sum(perm_ions.get(ion, 0) / mw * z
                              for ion, (mw, z) in _cat_mw_z.items())
             sum_an_meq  = sum(perm_ions.get(ion, 0) / mw * z
@@ -411,6 +691,7 @@ class ROEngine:
             "ndp": ndp,
             "beta": beta_actual,
             "recovery": element_recovery,
+            "converged": converged,
             "feed_ions": feed_ions,
             "perm_ions": perm_ions,
             "rej_ions": rej_ions
@@ -430,7 +711,10 @@ class ROEngine:
                         aged_params: Dict = None,
                         permeate_pressure_bar: float = 0.0,
                         enable_booster: bool = False,
-                        interboost_dp_bar: float = None) -> Dict[str, Any]:
+                        interboost_dp_bar: float = None,
+                        erd_efficiency: float = None,
+                        age_years: float = 0.0,
+                        flow_factor: float = None) -> Dict[str, Any]:
         """
         Simulate an entire RO/NF array with interstage booster pump calculations.
         vessels_per_stage: e.g., [4, 2] for a 2-stage system
@@ -438,8 +722,32 @@ class ROEngine:
         aged_params: optional dict keyed by (stage, element) tuples containing
         {"A": float, "B": float, "dh": float} for aged membrane simulation.
         If provided, element-wise A and B are overridden from this dict.
+
+        feed_ions may include "CO2" (use split_carbonate() with the feed pH first);
+        CO2 then passes at 0 % rejection and permeate/reject pH are reported.
+        erd_efficiency: optional energy-recovery device efficiency (e.g. 0.95 for
+        an isobaric PX device on SWRO). None = no ERD (previous behaviour).
+        age_years: membrane age for a guarantee projection (Toray DS2 uses 3 years).
+            B_aged = B * (1 + SPI)^age, A_aged = A * (1 - flux decline)^age,
+            with "spi_pct_per_yr" / "flux_decline_pct_per_yr" from the database.
+        flow_factor: fouling / flow allowance applied to A on top of ageing
+            (Toray DS2 "Flow Allowance" by water type, e.g. 0.861 for filtered
+            tertiary waste at age 0). None = 1.0.
         """
         membrane = MembraneDatabase.get_ro_membrane(membrane_model)
+
+        # Ageing for guarantee projections (same convention as Toray DS2)
+        age_A = age_B = None
+        if age_years and age_years > 0:
+            spi = membrane.get("spi_pct_per_yr", 10.0) / 100.0
+            fdec = membrane.get("flux_decline_pct_per_yr", 5.3) / 100.0
+            age_B = membrane["permeability_B"] * (1.0 + spi) ** age_years
+            age_A = membrane["permeability_A"] * (1.0 - fdec) ** age_years
+        if flow_factor:
+            age_A = (age_A if age_A is not None else membrane["permeability_A"]) * flow_factor
+        
+        # Normalize permeate backpressure to 0.0 if omitted or passed as None
+        permeate_pressure_bar = 0.0 if permeate_pressure_bar is None else float(permeate_pressure_bar)
         
         system_results = {
             "stages": [],
@@ -490,8 +798,8 @@ class ROEngine:
                     })
 
                 # Apply aged parameter overrides if provided
-                a_ovr = None
-                b_ovr = None
+                a_ovr = age_A
+                b_ovr = age_B
                 if aged_params:
                     key = (stage_idx + 1, elem_idx + 1)
                     if key in aged_params:
@@ -505,22 +813,32 @@ class ROEngine:
                 )
                 
                 # Check feed pressure limit
-                if vessel_current_pressure > membrane.get("max_pressure_bar", 41.0):
+                max_p = membrane.get("max_pressure_bar", 41.0)   # FIX: same default used in the message (was KeyError)
+                if vessel_current_pressure > max_p:
                     system_results["warnings"].append({
                         "type": f"Feed Pressure > Max (S{stage_idx+1}-E{elem_idx+1})",
                         "element": f"S{stage_idx+1}-E{elem_idx+1}",
-                        "limit": membrane["max_pressure_bar"],
+                        "limit": max_p,
                         "value": vessel_current_pressure
                     })
                     
                 # Check element recovery limit
                 elem_rec_pct = res["recovery"] * 100.0
-                if elem_rec_pct > membrane.get("max_recovery_pct", 15.0):
+                max_rec = membrane.get("max_recovery_pct", 15.0)   # FIX: was KeyError if missing
+                if elem_rec_pct > max_rec:
                     system_results["warnings"].append({
                         "type": f"Element Recovery > Max (S{stage_idx+1}-E{elem_idx+1})",
                         "element": f"S{stage_idx+1}-E{elem_idx+1}",
-                        "limit": membrane["max_recovery_pct"],
+                        "limit": max_rec,
                         "value": elem_rec_pct
+                    })
+
+                # FIX: flag elements whose flux/pressure solver did not converge
+                if not res.get("converged", True):
+                    system_results["warnings"].append({
+                        "type": f"Solver not converged (S{stage_idx+1}-E{elem_idx+1})",
+                        "element": f"S{stage_idx+1}-E{elem_idx+1}",
+                        "limit": "20 iterations", "value": res["perm_flow"]
                     })
 
                 # Check Concentration Polarization limit (beta >= 1.20)
@@ -607,6 +925,15 @@ class ROEngine:
                     booster_required = False
                 
                 total_booster_power_kw += booster_power_kw
+
+                # FIX: booster is OFF by default; warn when the next stage is
+                # starved of pressure (seen in BIDCO: stage-2 flux drop, S1-E6 recovery warning)
+                if not enable_booster and p_available < p_required:
+                    system_results["warnings"].append({
+                        "type": f"Interstage pressure low (Stage {stage_idx+2}) - consider booster",
+                        "element": f"Stage {stage_idx+2}",
+                        "limit": round(p_required, 2), "value": round(p_available, 2)
+                    })
                 
                 booster_data = {
                     "location": f"Between Stage {stage_idx + 1} and Stage {stage_idx + 2}",
@@ -636,21 +963,29 @@ class ROEngine:
                 current_feed_flow = stage_exit_flow
                 current_ions = stage_exit_ions.copy()
             
-        # Final System summary (TDS includes SiO2; excludes neutral B and dissolved CO2)
+        # Final System summary
+        # FIX: TDS on Toray DS2 basis = all ions + SiO2 + B; only CO2 excluded
+        # (previously B was excluded, and the report footnote said SiO2 was excluded)
         system_perm_ions = {}
         system_perm_tds = 0.0
-        feed_tds = sum(v for k, v in feed_ions.items() if k not in ("B", "CO2"))
-        conc_tds = sum(v for k, v in current_ions.items() if k not in ("B", "CO2"))
+        feed_tds = sum(v for k, v in feed_ions.items() if k not in TDS_EXCLUDE)
+        conc_tds = sum(v for k, v in current_ions.items() if k not in TDS_EXCLUDE)
         
         for ion in feed_ions.keys():
             if total_perm_flow > 0:
                 c = total_perm_mass[ion] / total_perm_flow
                 system_perm_ions[ion] = c
-                if ion not in ("B", "CO2"):
+                if ion not in TDS_EXCLUDE:
                     system_perm_tds += c
             else:
                 system_perm_ions[ion] = 0.0
                 
+        # Mixed permeate re-equilibrated: carbonate follows CO2 + electroneutrality
+        # of the blended strong ions (element permeates are not additive in pH)
+        if feed_ions.get("CO2", 0) > 0 and total_perm_flow > 0 and membrane.get("type", "").upper() != "NF":
+            system_perm_ions = self._permeate_carbonate(system_perm_ions, temp_c)
+            system_perm_tds = sum(v for k, v in system_perm_ions.items() if k not in TDS_EXCLUDE)
+
         total_area = sum(vessels_per_stage) * elements_per_vessel * membrane["active_area_m2"]
         avg_flux = (total_perm_flow * 1000.0) / total_area
         system_recovery = total_perm_flow / feed_flow_m3h
@@ -659,7 +994,11 @@ class ROEngine:
         # High pressure pump: Power = Q * P / (36 * efficiency)
         hp_pump_efficiency = 0.80
         hp_pump_power_kw = (feed_flow_m3h * feed_pressure_bar) / (36.0 * hp_pump_efficiency)
-        total_power_kw = hp_pump_power_kw + total_booster_power_kw
+        # FIX (new option): energy recovery device on the reject (SWRO)
+        erd_recovered_kw = 0.0
+        if erd_efficiency:
+            erd_recovered_kw = current_feed_flow * max(0.0, stage_exit_pressure) * erd_efficiency / 36.0
+        total_power_kw = hp_pump_power_kw + total_booster_power_kw - erd_recovered_kw
         sec = total_power_kw / total_perm_flow if total_perm_flow > 0 else 0
         
         # Calculate total differential pressure across the system
@@ -675,16 +1014,25 @@ class ROEngine:
             "avg_flux_lmh": avg_flux,
             "feed_pressure_bar": feed_pressure_bar,
             "conc_pressure_bar": stage_exit_pressure,
+            "permeate_pressure_bar": permeate_pressure_bar,
             "total_dp_bar": round(total_dp_bar, 2),
             "total_tmp_bar": round(total_tmp_bar, 2),
             "hp_pump_power_kw": round(hp_pump_power_kw, 2),
             "booster_pump_power_kw": round(total_booster_power_kw, 2),
+            "erd_recovered_kw": round(erd_recovered_kw, 2),
             "total_power_kw": round(total_power_kw, 2),
             "sec_kwh_m3": sec,
             "feed_tds": feed_tds,
             "perm_tds": system_perm_tds,
             "conc_tds": conc_tds,
             "perm_ions": system_perm_ions,
+            # NEW: charge balance check (cation meq/L, anion meq/L) and pH from CO2/HCO3
+            "perm_charge_balance_meq": tuple(round(x, 4) for x in charge_balance(system_perm_ions)),
+            "perm_ph": carbonate_ph(system_perm_ions.get("HCO3", 0), system_perm_ions.get("CO2", 0), temp_c,
+                                    ionic_strength(system_perm_ions)),
+            "conc_ph": carbonate_ph(current_ions.get("HCO3", 0), current_ions.get("CO2", 0), temp_c,
+                                    ionic_strength(current_ions)),
+            "age_years": age_years,
             "conc_ions": current_ions,
             "vessels_per_stage": vessels_per_stage
         }
