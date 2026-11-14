@@ -1473,7 +1473,8 @@ async function runPhreeqcCalculation() {
         });
 
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            const errData = await response.json().catch(() => ({ detail: response.statusText }));
+            throw new Error(errData.detail || `Server error (${response.status})`);
         }
 
         const result = await response.json();
@@ -1543,7 +1544,7 @@ async function runPhreeqcCalculation() {
 
     } catch (error) {
         console.error('PHREEQC API Error:', error);
-        alert('Error: Could not connect to the Python backend. Is it running?');
+        alert(`Scaling Analysis Error: ${error.message || 'Could not connect to the Python backend.'}`);
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="fa-solid fa-bolt"></i> Run Scaling Analysis';
