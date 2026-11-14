@@ -112,6 +112,7 @@ class FeedWaterData(BaseModel):
     iron: float = 0.0
     manganese: float = 0.0
     phosphate: float = 0.0
+    boron: float = 0.0
     tss: Optional[float] = 0.0
     turbidity: Optional[float] = 0.0
     tds: Optional[float] = 0.0
@@ -246,7 +247,7 @@ def calculate_scaling(data: FeedWaterData):
             'Fe': data.iron,
             'Mn': data.manganese,
             'P': f"{data.phosphate} as PO4",
-            'B': data.boron
+            'B': getattr(data, 'boron', 0.0) or 0.0
         })
         
         # Retrieve saturation indices (SI)
