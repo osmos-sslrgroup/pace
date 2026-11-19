@@ -524,12 +524,128 @@
         <div class="dashboard" id="scaling-panel-view" style="display: none; grid-template-columns: 1fr 450px; gap: 16px; padding: 16px;">
 
             <main style="display: flex; flex-direction: column; gap: 12px;">
+                <!-- Plant Operating Data Card -->
+                <section class="card" id="scaling-operating-data-card" style="margin-bottom: 0; border: 1px solid var(--card-border);">
+                    <div class="card-header" style="background: rgba(239, 68, 68, 0.08); border-bottom: 1px solid var(--card-border); padding: 0.8rem 1.2rem;">
+                        <h2 class="card-title" style="color: #ef4444; font-weight: 800; text-transform: uppercase; font-size: 1.05rem; letter-spacing: 0.8px; display: flex; align-items: center; gap: 0.6rem;">
+                            <i class="fa-solid fa-sliders"></i> Plant operating data
+                        </h2>
+                    </div>
+                    <div class="card-content" style="padding: 1.2rem; display: flex; flex-direction: column; gap: 1rem;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                            <!-- Left Column: Operating conditions & pH -->
+                            <div style="display: flex; flex-direction: column; gap: 0.9rem;">
+                                <!-- Pressure -->
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.3rem;">
+                                        <label style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary);">Pressure, kg/cm²</label>
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 0.8rem;">
+                                        <input type="range" id="scaling-pressure-slider" min="5" max="80" step="0.5" value="20.0" style="flex: 1; accent-color: #3b82f6; cursor: pointer;">
+                                        <input type="number" id="scaling-pressure-val" min="5" max="80" step="0.5" value="20.0" style="width: 75px; text-align: center; padding: 0.3rem 0.4rem; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; color: var(--text-primary); font-weight: 700; font-size: 0.88rem;">
+                                    </div>
+                                </div>
+                                <!-- Temperature -->
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.3rem;">
+                                        <label style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary);">Temperature, °C</label>
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 0.8rem;">
+                                        <input type="range" id="scaling-temp-slider" min="5" max="45" step="0.5" value="20.0" style="flex: 1; accent-color: #3b82f6; cursor: pointer;">
+                                        <input type="number" id="scaling-temp-val" min="5" max="45" step="0.5" value="20.0" style="width: 75px; text-align: center; padding: 0.3rem 0.4rem; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; color: var(--text-primary); font-weight: 700; font-size: 0.88rem;">
+                                    </div>
+                                </div>
+                                <!-- Raw water pH -->
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.3rem;">
+                                        <label style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary);">Raw water pH</label>
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 0.8rem;">
+                                        <input type="range" id="scaling-raw-ph-slider" min="3" max="11" step="0.1" value="7.5" style="flex: 1; accent-color: #3b82f6; cursor: pointer;">
+                                        <input type="number" id="scaling-raw-ph-val" min="3" max="11" step="0.1" value="7.5" style="width: 75px; text-align: center; padding: 0.3rem 0.4rem; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; color: var(--text-primary); font-weight: 700; font-size: 0.88rem;">
+                                    </div>
+                                </div>
+                                <!-- Feed water pH -->
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+                                        <label style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary);">Feed water pH</label>
+                                        <div style="display: flex; align-items: center; gap: 0.4rem;">
+                                            <span style="font-size: 0.72rem; color: var(--text-secondary);">Acid:</span>
+                                            <select id="scaling-acid-select" style="font-size: 0.75rem; padding: 0.15rem 0.3rem; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; color: var(--text-primary);">
+                                                <option value="H2SO4">H₂SO₄</option>
+                                                <option value="HCl">HCl</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 0.8rem;">
+                                        <input type="range" id="scaling-feed-ph-slider" min="3" max="11" step="0.1" value="7.5" style="flex: 1; accent-color: #ef4444; cursor: pointer;">
+                                        <input type="number" id="scaling-feed-ph-val" min="3" max="11" step="0.1" value="7.5" style="width: 75px; text-align: center; padding: 0.3rem 0.4rem; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; color: var(--text-primary); font-weight: 700; font-size: 0.88rem;">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Right Column: Recovery, CF & Flows -->
+                            <div style="display: flex; flex-direction: column; gap: 0.9rem;">
+                                <!-- Recovery (%) & CF -->
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+                                        <label style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary);">Recovery (%)</label>
+                                        <span style="font-size: 0.75rem; font-weight: 700; color: var(--text-secondary); margin-right: 25px;">CF</span>
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 0.6rem;">
+                                        <input type="range" id="scaling-recovery-slider" min="10" max="95" step="1" value="75" style="flex: 1; accent-color: #3b82f6; cursor: pointer;">
+                                        <input type="number" id="scaling-recovery-val" min="10" max="95" step="1" value="75" style="width: 60px; text-align: center; padding: 0.3rem 0.4rem; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; color: var(--text-primary); font-weight: 700; font-size: 0.88rem;">
+                                        <div id="scaling-cf-display" style="background: #fef08a; color: #854d0e; font-weight: 800; border: 1px solid #facc15; border-radius: 4px; padding: 0.3rem 0.5rem; text-align: center; min-width: 55px; font-size: 0.9rem;" title="Concentration Factor = 1 / (1 - Recovery/100)">4.0</div>
+                                    </div>
+                                </div>
+                                <!-- Product flow, m3/day -->
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.3rem;">
+                                        <label style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary);">Product flow, m³/day</label>
+                                    </div>
+                                    <input type="number" id="scaling-product-flow" min="1" step="1" value="100.0" style="width: 100%; padding: 0.35rem 0.6rem; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; color: var(--text-primary); font-weight: 700; font-size: 0.88rem; text-align: right;">
+                                </div>
+                                <!-- Feed flow, m3/day -->
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.3rem;">
+                                        <label style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary);">Feed flow, m³/day</label>
+                                    </div>
+                                    <input type="number" id="scaling-feed-flow" min="1" step="0.1" value="133.33" style="width: 100%; padding: 0.35rem 0.6rem; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; color: var(--text-primary); font-weight: 700; font-size: 0.88rem; text-align: right;">
+                                </div>
+                                <!-- Concentrate flow, m3/day -->
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.3rem;">
+                                        <label style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary);">Concentrate flow, m³/day</label>
+                                    </div>
+                                    <div id="scaling-conc-flow" style="width: 100%; padding: 0.35rem 0.6rem; background: #fef08a; color: #854d0e; font-weight: 800; border: 1px solid #facc15; border-radius: 4px; font-size: 0.88rem; text-align: right; box-sizing: border-box;">33.33</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Live Status / Acid summary banner -->
+                        <div id="scaling-operating-summary" style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.03); border: 1px solid var(--card-border); padding: 0.5rem 0.8rem; border-radius: 6px; font-size: 0.8rem;">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <i class="fa-solid fa-flask" style="color: #6366f1;"></i>
+                                <span style="color: var(--text-secondary);">Acid Dosing:</span>
+                                <strong id="scaling-acid-dose-display" style="color: var(--text-primary);">0.0 mg/L (H₂SO₄)</strong>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <span style="color: var(--text-secondary);">Evaluating:</span>
+                                <span id="scaling-eval-mode" style="background: rgba(59, 130, 246, 0.15); color: #2563eb; font-weight: 700; padding: 0.15rem 0.5rem; border-radius: 12px; font-size: 0.75rem;">Brine Stream (CF = 4.0)</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
                 <section class="card" style="height: 100%; display: flex; flex-direction: column; margin-bottom: 0;">
                     <div class="card-header">
                         <h2 class="card-title" style="color: white; font-weight: 700; text-transform: uppercase; font-size: 1.1rem; letter-spacing: 0.5px;"><i class="fa-solid fa-triangle-exclamation" style="color: rgba(255,255,255,0.8);"></i> SCALING & FOULING INDICES</h2>
                     </div>
                     <div class="card-content" style="flex: 1; display: flex; flex-direction: column;">
-                        <h3 style="margin-top: 0; margin-bottom: 12px; color: var(--color-on-surface-variant); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;">Saturation Indices (Feed Water)</h3>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                            <h3 style="margin: 0; color: var(--color-on-surface-variant); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;">Saturation Indices</h3>
+                            <span id="si-stream-label" style="font-size: 0.75rem; color: #3b82f6; font-weight: 700; background: rgba(59, 130, 246, 0.1); padding: 0.2rem 0.6rem; border-radius: 4px;">Concentrate Stream (CF = 4.0)</span>
+                        </div>
 
                         <div class="si-grid">
                             <div class="si-card">
