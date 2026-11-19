@@ -1235,6 +1235,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 // specific tab logic
                 if (id === 'aging-tab-btn') {
                     if(typeof syncAllParametersFromFeed === 'function') syncAllParametersFromFeed();
+                } else if (id === 'scaling-tab-btn') {
+                    if (typeof initScalingOperatingData === 'function') initScalingOperatingData();
                 } else if (id === 'calculation-tab-btn') {
                     if (typeof window.updateLivePFD === 'function') window.updateLivePFD();
                     
@@ -1401,11 +1403,194 @@ document.addEventListener('DOMContentLoaded', () => {
     // PHREEQC Integration
     const runPhreeqcBtn = document.getElementById('run-phreeqc-btn');
     if (runPhreeqcBtn) {
-        runPhreeqcBtn.addEventListener('click', runPhreeqcCalculation);
+        runPhreeqcBtn.addEventListener('click', () => runPhreeqcCalculation(false));
+    }
+    if (typeof initScalingOperatingData === 'function') {
+        initScalingOperatingData();
     }
 });
 
-async function runPhreeqcCalculation() {
+let scalingDebounceTimer = null;
+function triggerDebouncedScaling() {
+    if (scalingDebounceTimer) {
+        clearTimeout(scalingDebounceTimer);
+    }
+    scalingDebounceTimer = setTimeout(() => {
+        const scalingView = document.getElementById('scaling-panel-view');
+        if (scalingView && scalingView.style.display !== 'none') {
+            runPhreeqcCalculation(true);
+        }
+    }, 350);
+}
+
+function initScalingOperatingData() {
+    const feedPhInput = document.getElementById('ph');
+    const feedTempInput = document.getElementById('temp');
+    const feedRecInput = document.getElementById('recovery');
+
+    const rawPhSlider = document.getElementById('scaling-raw-ph-slider');
+    const rawPhVal = document.getElementById('scaling-raw-ph-val');
+    const feedPhSlider = document.getElementById('scaling-feed-ph-slider');
+    const feedPhVal = document.getElementById('scaling-feed-ph-val');
+
+    const tempSlider = document.getElementById('scaling-temp-slider');
+    const tempVal = document.getElementById('scaling-temp-val');
+
+    const recSlider = document.getElementById('scaling-recovery-slider');
+    const recVal = document.getElementById('scaling-recovery-val');
+    const cfDisplay = document.getElementById('scaling-cf-display');
+
+    const prodFlowInput = document.getElementById('scaling-product-flow');
+    const feedFlowInput = document.getElementById('scaling-feed-flow');
+    const concFlowDisplay = document.getElementById('scaling-conc-flow');
+    const acidSelect = document.getElementById('scaling-acid-select');
+    const pressureSlider = document.getElementById('scaling-pressure-slider');
+    const pressureVal = document.getElementById('scaling-pressure-val');
+
+    // Sync initial values from Feed Data tab if available and not yet set
+    if (!window._scalingOperatingDataInitialized) {
+        if (feedPhInput && rawPhVal) {
+            const initPh = parseFloat(feedPhInput.value) || 7.5;
+            rawPhVal.value = initPh.toFixed(1);
+            if (rawPhSlider) rawPhSlider.value = initPh;
+            if (feedPhVal) feedPhVal.value = initPh.toFixed(1);
+            if (feedPhSlider) feedPhSlider.value = initPh;
+        }
+
+        if (feedTempInput && tempVal) {
+            const initTemp = parseFloat(feedTempInput.value) || 20.0;
+            tempVal.value = initTemp.toFixed(1);
+            if (tempSlider) tempSlider.value = initTemp;
+        }
+
+        if (feedRecInput && recVal) {
+            const initRec = parseFloat(feedRecInput.value) || 75.0;
+            recVal.value = Math.round(initRec);
+            if (recSlider) recSlider.value = Math.round(initRec);
+        }
+    }
+
+    // Helper to calculate and sync hydraulics
+    function updateHydraulics(fromFeedFlow = false) {
+        let recovery = parseFloat(recVal ? recVal.value : 75) || 75;
+        let prodFlow = parseFloat(prodFlowInput ? prodFlowInput.value : 100) || 100;
+        let feedFlow = parseFloat(feedFlowInput ? feedFlowInput.value : 133.33) || 133.33;
+
+        if (fromFeedFlow) {
+            if (feedFlow > prodFlow && feedFlow > 0) {
+                recovery = (prodFlow / feedFlow) * 100.0;
+                recovery = Math.min(Math.max(recovery, 5), 98);
+                if (recVal) recVal.value = recovery.toFixed(1);
+                if (recSlider) recSlider.value = Math.round(recovery);
+            }
+        } else {
+            recovery = Math.min(Math.max(recovery, 5), 98);
+            feedFlow = prodFlow / (recovery / 100.0);
+            if (feedFlowInput) feedFlowInput.value = feedFlow.toFixed(2);
+        }
+
+        const concFlow = Math.max(0, feedFlow - prodFlow);
+        if (concFlowDisplay) concFlowDisplay.textContent = concFlow.toFixed(2);
+
+        const cf = 1.0 / (1.0 - recovery / 100.0);
+        if (cfDisplay) cfDisplay.textContent = cf.toFixed(1);
+
+        const evalMode = document.getElementById('scaling-eval-mode');
+        if (evalMode) {
+            evalMode.textContent = `Brine Stream (CF = ${cf.toFixed(1)})`;
+        }
+        const streamLabel = document.getElementById('si-stream-label');
+        if (streamLabel) {
+            streamLabel.textContent = `Concentrate Stream (CF = ${cf.toFixed(1)})`;
+        }
+    }
+
+    // Initial update of hydraulics
+    updateHydraulics();
+
+    // Bind event listeners once
+    if (!window._scalingOperatingDataInitialized) {
+        window._scalingOperatingDataInitialized = true;
+
+        if (pressureSlider && pressureVal) {
+            pressureSlider.addEventListener('input', () => {
+                pressureVal.value = parseFloat(pressureSlider.value).toFixed(1);
+                triggerDebouncedScaling();
+            });
+            pressureVal.addEventListener('input', () => {
+                pressureSlider.value = pressureVal.value;
+                triggerDebouncedScaling();
+            });
+        }
+
+        if (tempSlider && tempVal) {
+            tempSlider.addEventListener('input', () => {
+                tempVal.value = parseFloat(tempSlider.value).toFixed(1);
+                triggerDebouncedScaling();
+            });
+            tempVal.addEventListener('input', () => {
+                tempSlider.value = tempVal.value;
+                triggerDebouncedScaling();
+            });
+        }
+
+        if (rawPhSlider && rawPhVal) {
+            rawPhSlider.addEventListener('input', () => {
+                rawPhVal.value = parseFloat(rawPhSlider.value).toFixed(1);
+                triggerDebouncedScaling();
+            });
+            rawPhVal.addEventListener('input', () => {
+                rawPhSlider.value = rawPhVal.value;
+                triggerDebouncedScaling();
+            });
+        }
+
+        if (feedPhSlider && feedPhVal) {
+            feedPhSlider.addEventListener('input', () => {
+                feedPhVal.value = parseFloat(feedPhSlider.value).toFixed(1);
+                triggerDebouncedScaling();
+            });
+            feedPhVal.addEventListener('input', () => {
+                feedPhSlider.value = feedPhVal.value;
+                triggerDebouncedScaling();
+            });
+        }
+
+        if (acidSelect) {
+            acidSelect.addEventListener('change', () => {
+                triggerDebouncedScaling();
+            });
+        }
+
+        if (recSlider && recVal) {
+            recSlider.addEventListener('input', () => {
+                recVal.value = recSlider.value;
+                updateHydraulics(false);
+                triggerDebouncedScaling();
+            });
+            recVal.addEventListener('input', () => {
+                recSlider.value = recVal.value;
+                updateHydraulics(false);
+                triggerDebouncedScaling();
+            });
+        }
+
+        if (prodFlowInput) {
+            prodFlowInput.addEventListener('input', () => {
+                updateHydraulics(false);
+            });
+        }
+
+        if (feedFlowInput) {
+            feedFlowInput.addEventListener('input', () => {
+                updateHydraulics(true);
+                triggerDebouncedScaling();
+            });
+        }
+    }
+}
+
+async function runPhreeqcCalculation(isSilent = false) {
     const btn = document.getElementById('run-phreeqc-btn');
     
     // Extract current feed data
@@ -1436,9 +1621,32 @@ async function runPhreeqcCalculation() {
     const phosphate = parseFloat(document.getElementById('po4').value) || 0;
     const boron = parseFloat((document.getElementById('b') || document.getElementById('boron') || {}).value) || 0;
     
+    // Operating data overrides if available
+    const scalingRawPhEl = document.getElementById('scaling-raw-ph-val');
+    const scalingFeedPhEl = document.getElementById('scaling-feed-ph-val');
+    const scalingRecoveryEl = document.getElementById('scaling-recovery-val');
+    const scalingTempEl = document.getElementById('scaling-temp-val');
+    const scalingPressureEl = document.getElementById('scaling-pressure-val');
+    const scalingAcidEl = document.getElementById('scaling-acid-select');
+
+    const effectiveRawPh = scalingRawPhEl ? (parseFloat(scalingRawPhEl.value) || ph) : ph;
+    const effectiveFeedPh = scalingFeedPhEl ? (parseFloat(scalingFeedPhEl.value) || effectiveRawPh) : effectiveRawPh;
+    const effectiveTemp = scalingTempEl ? (parseFloat(scalingTempEl.value) || temp) : temp;
+    const effectiveRecovery = scalingRecoveryEl ? (parseFloat(scalingRecoveryEl.value) || 75.0) : 75.0;
+    const effectivePressure = scalingPressureEl ? (parseFloat(scalingPressureEl.value) || 20.0) : 20.0;
+    const effectiveAcid = scalingAcidEl ? scalingAcidEl.value : 'H2SO4';
+    const effectiveCf = effectiveRecovery < 100 ? (1.0 / (1.0 - effectiveRecovery / 100.0)) : 1.0;
+
     const payload = {
-        temperature: temp,
-        ph: ph,
+        temperature: effectiveTemp,
+        ph: effectiveFeedPh,
+        raw_ph: effectiveRawPh,
+        feed_ph: effectiveFeedPh,
+        recovery_pct: effectiveRecovery,
+        concentration_factor: effectiveCf,
+        pressure_bar: effectivePressure,
+        acid_type: effectiveAcid,
+        calculate_concentrate: true,
         calcium: ca,
         magnesium: mg,
         sodium: na,
@@ -1461,8 +1669,10 @@ async function runPhreeqcCalculation() {
     };
 
     try {
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Calculating...';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Calculating...';
+        }
 
         const response = await fetch(API_BASE + '/api/calculate-scaling', {
             method: 'POST',
@@ -1500,8 +1710,6 @@ async function runPhreeqcCalculation() {
         document.getElementById('si-mn').textContent = formatSi(result.manganese_si);
         document.getElementById('si-po4').textContent = formatSi(result.calcium_phosphate_si);
         
-
-        
         // Color code based on saturation risk
         updateSiColor('si-gypsum', result.gypsum_si, 0);
         updateSiColor('si-anhydrite', result.anhydrite_si, 0);
@@ -1515,6 +1723,40 @@ async function runPhreeqcCalculation() {
         updateSiColor('si-mn', result.manganese_si, 0);
         updateSiColor('si-po4', result.calcium_phosphate_si, 0);
 
+        // Update Plant Operating Data UI Displays
+        const cfDisplay = document.getElementById('scaling-cf-display');
+        if (cfDisplay && result.cf !== undefined) {
+            cfDisplay.textContent = Number(result.cf).toFixed(1);
+        }
+
+        const doseDisplay = document.getElementById('scaling-acid-dose-display');
+        if (doseDisplay) {
+            const dose = (result.acid_dose_mg_l !== undefined) ? Number(result.acid_dose_mg_l).toFixed(1) : '0.0';
+            const acidType = result.acid_type || effectiveAcid;
+            doseDisplay.textContent = `${dose} mg/L (${acidType})`;
+        }
+
+        const evalMode = document.getElementById('scaling-eval-mode');
+        if (evalMode) {
+            if (result.cf && result.cf > 1.01) {
+                evalMode.textContent = `Brine Stream (CF = ${Number(result.cf).toFixed(1)})`;
+                evalMode.style.background = 'rgba(59, 130, 246, 0.15)';
+                evalMode.style.color = '#2563eb';
+            } else {
+                evalMode.textContent = 'Feed Stream (CF = 1.0)';
+                evalMode.style.background = 'rgba(16, 185, 129, 0.15)';
+                evalMode.style.color = '#059669';
+            }
+        }
+
+        const streamLabel = document.getElementById('si-stream-label');
+        if (streamLabel) {
+            if (result.cf && result.cf > 1.01) {
+                streamLabel.textContent = `Concentrate Stream (CF = ${Number(result.cf).toFixed(1)})`;
+            } else {
+                streamLabel.textContent = 'Feed Stream (CF = 1.0)';
+            }
+        }
 
         // Update Chart
         if (window.siChart) {
@@ -1536,7 +1778,7 @@ async function runPhreeqcCalculation() {
                 if (val === null) return 'rgba(0,0,0,0)';
                 return val > 0 ? 'rgba(239, 68, 68, 1)' : 'rgba(79, 70, 229, 1)';
             });
-            window.siChart.data.datasets[0].borderWidth = 2;
+            window.siChart.borderWidth = 2;
             window.siChart.data.datasets[0].borderRadius = 6;
             window.siChart.data.datasets[0].borderSkipped = false;
             window.siChart.update();
@@ -1544,10 +1786,14 @@ async function runPhreeqcCalculation() {
 
     } catch (error) {
         console.error('PHREEQC API Error:', error);
-        alert(`Scaling Analysis Error: ${error.message || 'Could not connect to the Python backend.'}`);
+        if (!isSilent) {
+            alert(`Scaling Analysis Error: ${error.message || 'Could not connect to the Python backend.'}`);
+        }
     } finally {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="fa-solid fa-bolt"></i> Run Scaling Analysis';
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-bolt"></i> Run Scaling Analysis';
+        }
     }
 }
 
