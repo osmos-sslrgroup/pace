@@ -131,6 +131,14 @@ class FeedWaterData(BaseModel):
     tss: Optional[float] = 0.0
     turbidity: Optional[float] = 0.0
     tds: Optional[float] = 0.0
+    # Plant operating data fields for scaling analysis
+    raw_ph: Optional[float] = None
+    feed_ph: Optional[float] = None
+    recovery_pct: Optional[float] = 75.0
+    concentration_factor: Optional[float] = None
+    pressure_bar: Optional[float] = 20.0
+    acid_type: Optional[str] = "H2SO4"
+    calculate_concentrate: Optional[bool] = True
 
 class AutoBalanceInput(BaseModel):
     calcium: float = 0.0
@@ -233,29 +241,62 @@ def read_root():
 @app.post("/api/calculate-scaling")
 def calculate_scaling(data: FeedWaterData):
     try:
-        # Create a new solution
+        # Determine operating conditions and pH targets
+        raw_ph = data.raw_ph if data.raw_ph is not None else (data.ph or 7.0)
+        feed_ph = data.feed_ph if data.feed_ph is not None else raw_ph
+        temp_c = data.temperature or 25.0
+        acid_type = getattr(data, 'acid_type', 'H2SO4') or 'H2SO4'
+        calc_conc = getattr(data, 'calculate_concentrate', True)
+
+        # Compute Concentration Factor (CF)
+        if getattr(data, 'concentration_factor', None) is not None and data.concentration_factor > 0:
+            cf = float(data.concentration_factor)
+        elif getattr(data, 'recovery_pct', None) is not None and calc_conc:
+            rec = min(max(float(data.recovery_pct), 1.0), 98.0)
+            cf = 1.0 / (1.0 - rec / 100.0)
+        else:
+            cf = 1.0
+        cf = max(1.0, cf)
+
+        # Calculate acid dosing and counter-ion adjustments when feed pH is depressed
+        acid_dose = 0.0
+        so4_base = data.sulfate or 0.0
+        cl_base = data.chloride or 0.0
+        if feed_ph < (raw_ph - 0.02):
+            try:
+                from conditioning import compute_chemical_dose
+                ions_dict = {"pH": raw_ph, "HCO3": data.bicarbonate or 0.0, "bicarbonate": data.bicarbonate or 0.0}
+                acid_dose = compute_chemical_dose(ions_dict, target_ph=feed_ph, chemical=acid_type)
+                if acid_type == "H2SO4":
+                    so4_base += acid_dose * (96.06 / 98.08)
+                elif acid_type == "HCl":
+                    cl_base += acid_dose * (35.45 / 36.46)
+            except Exception as _dose_err:
+                print(f"[WARN] acid dose calculation error: {_dose_err}")
+
+        # Create concentrated solution in PHREEQC
         sol = pp.add_solution({
             'units': 'mg/L',
-            'temp': data.temperature,
-            'pH': data.ph,
-            'Ca': data.calcium,
-            'Mg': data.magnesium,
-            'Na': data.sodium,
-            'K': data.potassium,
-            'N(-3)': f"{data.ammonium} as NH4",
-            'Cl': data.chloride,
-            'S(6)': f"{data.sulfate} as SO4",
-            'Alkalinity': f"{data.bicarbonate} as CaCO3",
-            'N(5)': f"{data.nitrate} as NO3",
-            'Sr': data.strontium,
-            'F': data.fluoride,
-            'Si': f"{data.silica} as SiO2",
-            'Ba': data.barium,
-            'Al': data.aluminium,
-            'Fe': data.iron,
-            'Mn': data.manganese,
-            'P': f"{data.phosphate} as PO4",
-            'B': getattr(data, 'boron', 0.0) or 0.0
+            'temp': temp_c,
+            'pH': feed_ph,
+            'Ca': (data.calcium or 0.0) * cf,
+            'Mg': (data.magnesium or 0.0) * cf,
+            'Na': (data.sodium or 0.0) * cf,
+            'K': (data.potassium or 0.0) * cf,
+            'N(-3)': f"{(data.ammonium or 0.0) * cf} as NH4",
+            'Cl': cl_base * cf,
+            'S(6)': f"{so4_base * cf} as SO4",
+            'Alkalinity': f"{(data.bicarbonate or 0.0) * cf} as HCO3",
+            'N(5)': f"{(data.nitrate or 0.0) * cf} as NO3",
+            'Sr': (data.strontium or 0.0) * cf,
+            'F': (data.fluoride or 0.0) * cf,
+            'Si': f"{(data.silica or 0.0) * cf} as SiO2",
+            'Ba': (data.barium or 0.0) * cf,
+            'Al': (data.aluminium or 0.0) * cf,
+            'Fe': (data.iron or 0.0) * cf,
+            'Mn': (data.manganese or 0.0) * cf,
+            'P': f"{(data.phosphate or 0.0) * cf} as PO4",
+            'B': (getattr(data, 'boron', 0.0) or 0.0) * cf
         })
         
         # Retrieve saturation indices (SI)
@@ -272,10 +313,15 @@ def calculate_scaling(data: FeedWaterData):
             "iron_si": sol.si("Fe(OH)3(a)"),
             "aluminium_si": sol.si("Al(OH)3(a)"),
             "manganese_si": sol.si("Pyrolusite"),
-            "calcium_phosphate_si": sol.si("Hydroxyapatite")
+            "calcium_phosphate_si": sol.si("Hydroxyapatite"),
+            # Plant operating data metadata
+            "cf": round(cf, 2),
+            "raw_ph": round(raw_ph, 2),
+            "feed_ph": round(feed_ph, 2),
+            "acid_dose_mg_l": round(acid_dose, 2),
+            "acid_type": acid_type,
+            "stream_evaluated": "concentrate" if cf > 1.01 else "feed"
         }
-        
-        # We can also calculate LSI more specifically if needed, but Calcite SI is the rigorous thermodynamic equivalent.
         
         # Clean up memory
         sol.forget()
