@@ -608,6 +608,24 @@ def list_membranes():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/membranes/ro")
+def list_ro_membranes():
+    try:
+        return [MembraneDatabase.get_ro_membrane(k) for k in MembraneDatabase.RO_MEMBRANES.keys()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/membranes/ro/{model_name}")
+def get_ro_membrane_datasheet(model_name: str):
+    try:
+        if model_name not in MembraneDatabase.RO_MEMBRANES:
+            raise HTTPException(status_code=404, detail=f"Membrane model '{model_name}' not found")
+        return MembraneDatabase.get_ro_membrane(model_name)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/generate-calculation-report")
 def generate_calc_report(data: SystemCalcInput):
     try:

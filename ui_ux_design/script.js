@@ -6764,10 +6764,27 @@ window.openMembraneDatasheetModal = async function(modelName) {
     }
 
     try {
-        const res = await fetch(API_BASE + '/api/membranes/ro');
-        if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-        const membranes = await res.json();
-        const mem = membranes.find(m => m.model === selectedModel) || membranes.find(m => m.id === selectedModel);
+        let membranes = [];
+        try {
+            const res = await fetch(API_BASE + '/api/membranes/ro');
+            if (res.ok) {
+                membranes = await res.json();
+            } else {
+                const fallback = await fetch(API_BASE + '/api/membranes');
+                if (!fallback.ok) throw new Error(`HTTP error ${res.status}`);
+                const data = await fallback.json();
+                membranes = data.ro_membranes || [];
+            }
+        } catch (fetchErr) {
+            const fallback = await fetch(API_BASE + '/api/membranes');
+            if (!fallback.ok) throw fetchErr;
+            const data = await fallback.json();
+            membranes = data.ro_membranes || [];
+        }
+
+        const mem = membranes.find(m => m.model === selectedModel) || 
+                    membranes.find(m => m.id === selectedModel) || 
+                    membranes.find(m => m.name === selectedModel);
 
         if (!mem || !mem.datasheet) {
             if (bodyEl) {
@@ -6780,10 +6797,28 @@ window.openMembraneDatasheetModal = async function(modelName) {
             return;
         }
 
-        const ds = mem.datasheet;
-        const geom = ds.geometry || {};
-        const test = ds.test_conditions || {};
-        const limits = ds.operating_limits || {};
+        const ds = mem.datasheet || {};
+        const test = ds.test_conditions || {
+            solution: ds.test_solution,
+            pressure_psi: ds.test_pressure_psi,
+            pressure_bar: ds.test_pressure_bar,
+            recovery_pct: ds.test_recovery_pct,
+            temp_c: ds.test_temp_c
+        };
+        const limits = ds.operating_limits || mem.operating_limits || {};
+        const geom = ds.geometry || {
+            diameter_inch: mem.diameter_m ? (mem.diameter_m * 39.3701).toFixed(1) : (selectedModel.includes('8040') ? '8.0' : '4.0'),
+            length_inch: mem.length_m ? (mem.length_m * 39.3701).toFixed(1) : '40.0'
+        };
+        const modelDisplay = mem.model || mem.id || mem.name || selectedModel;
+        const activeArea = mem.active_area_m2 || mem.area || mem.active_area || 37.2;
+        const feedSpacerMil = mem.spacer_thickness_mil || mem.feed_spacer_mil || (mem.spacer_thickness_mm ? Math.round(mem.spacer_thickness_mm / 0.0254) : 31);
+        const spacerMm = (feedSpacerMil * 0.0254).toFixed(3);
+        const hydDia = mem.hydraulic_diameter_mm || (mem.hydraulic_diameter_m ? (mem.hydraulic_diameter_m * 1000).toFixed(2) : '1.01');
+        const maxBar = mem.max_pressure_bar || limits.max_pressure || 41.0;
+        const maxFlow = mem.max_feed_flow_m3h || limits.max_flow || 16.0;
+        const maxTemp = mem.max_temperature_c || mem.max_temp_c || limits.max_temp || 45.0;
+        const phRange = limits.ph_continuous || (mem.ph_range ? `${mem.ph_range[0]} – ${mem.ph_range[1]}` : '2.0 – 11.0');
 
         if (bodyEl) {
             bodyEl.innerHTML = `
@@ -6791,8 +6826,8 @@ window.openMembraneDatasheetModal = async function(modelName) {
                     <!-- Header Info Banner -->
                     <div style="background: linear-gradient(135deg, rgba(37,99,235,0.08), rgba(99,102,241,0.08)); border: 1px solid rgba(37,99,235,0.2); border-radius: 8px; padding: 1rem 1.25rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
                         <div>
-                            <div style="font-size: 1.2rem; font-weight: 700; color: var(--text-primary);">${mem.model}</div>
-                            <div style="font-size: 0.85rem; color: var(--text-secondary);">${mem.manufacturer} &bull; ${mem.type} &bull; ${mem.material || 'Polyamide Thin-Film Composite'}</div>
+                            <div style="font-size: 1.2rem; font-weight: 700; color: var(--text-primary);">${modelDisplay}</div>
+                            <div style="font-size: 0.85rem; color: var(--text-secondary);">${mem.manufacturer || 'Permionics'} &bull; ${mem.type || 'RO'} &bull; ${mem.material || 'Polyamide Thin-Film Composite'}</div>
                         </div>
                         <div style="text-align: right;">
                             <span style="background: #2563eb; color: #fff; font-size: 0.75rem; font-weight: 600; padding: 4px 10px; border-radius: 12px; text-transform: uppercase;">Datasheet Verified</span>
@@ -6809,9 +6844,9 @@ window.openMembraneDatasheetModal = async function(modelName) {
                             <table style="width: 100%; font-size: 0.82rem; border-collapse: collapse;">
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Test Solution</td><td style="text-align: right; font-weight: 600;">${test.solution || '2,000 ppm NaCl'}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Test Pressure</td><td style="text-align: right; font-weight: 600;">${test.pressure_psi ? test.pressure_psi + ' psi (' + (test.pressure_psi * 0.0689476).toFixed(1) + ' bar)' : '225 psi (15.5 bar)'}</td></tr>
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Nominal Rejection</td><td style="text-align: right; font-weight: 600; color: #16a34a;">${(mem.nominal_rejection ? (mem.nominal_rejection * 100).toFixed(2) : '99.60')}%</td></tr>
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Minimum Rejection</td><td style="text-align: right; font-weight: 600;">${(ds.min_rejection_pct || 99.50).toFixed(2)}%</td></tr>
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Nominal Flow</td><td style="text-align: right; font-weight: 600;">${mem.nominal_flow_m3d ? mem.nominal_flow_m3d.toFixed(1) + ' m³/d' : '39.7 m³/d'} (${ds.nominal_flow_gpd || (mem.nominal_flow_m3d ? Math.round(mem.nominal_flow_m3d * 264.172) : 10500)} GPD)</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Nominal Rejection</td><td style="text-align: right; font-weight: 600; color: #16a34a;">${(mem.nominal_rejection ? (mem.nominal_rejection * 100).toFixed(2) : (ds.nominal_rejection_pct || 99.60).toFixed(2))}%</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Minimum Rejection</td><td style="text-align: right; font-weight: 600;">${(ds.min_rejection_pct || (mem.min_rejection ? mem.min_rejection * 100 : 99.50)).toFixed(2)}%</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Nominal Flow</td><td style="text-align: right; font-weight: 600;">${ds.permeate_flow_m3d ? ds.permeate_flow_m3d.toFixed(1) + ' m³/d' : (mem.nominal_flow_m3d ? mem.nominal_flow_m3d.toFixed(1) + ' m³/d' : '39.7 m³/d')} (${ds.nominal_flow_gpd ? Math.round(ds.nominal_flow_gpd) : (ds.permeate_flow_m3d ? Math.round(ds.permeate_flow_m3d * 264.172) : 10500)} GPD)</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Test Recovery</td><td style="text-align: right; font-weight: 600;">${test.recovery_pct ? test.recovery_pct + '%' : '15%'}</td></tr>
                             </table>
                         </div>
@@ -6822,10 +6857,10 @@ window.openMembraneDatasheetModal = async function(modelName) {
                                 <i class="fa-solid fa-ruler-combined"></i> Channel &amp; Dimensions
                             </h4>
                             <table style="width: 100%; font-size: 0.82rem; border-collapse: collapse;">
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Active Area</td><td style="text-align: right; font-weight: 600;">${mem.active_area_m2 || 37.2} m² (${ds.active_area_ft2 || Math.round((mem.active_area_m2 || 37.2) * 10.7639)} ft²)</td></tr>
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Feed Spacer (h)</td><td style="text-align: right; font-weight: 600; color: #2563eb;">${mem.spacer_thickness_mil || (mem.spacer_thickness_mm ? Math.round(mem.spacer_thickness_mm / 0.0254) : 31)} mil (${(mem.spacer_thickness_mm || 0.787).toFixed(3)} mm)</td></tr>
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Hydraulic Dia (d_h)</td><td style="text-align: right; font-weight: 600; color: #2563eb;">${(mem.hydraulic_diameter_mm || 1.01).toFixed(2)} mm</td></tr>
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Element Diameter</td><td style="text-align: right; font-weight: 600;">${geom.diameter_inch || (mem.model.includes('8040') ? '8.0' : '4.0')}" (${mem.model.includes('8040') ? '203' : '101'} mm)</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Active Area</td><td style="text-align: right; font-weight: 600;">${activeArea} m² (${ds.active_area_ft2 || Math.round(activeArea * 10.7639)} ft²)</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Feed Spacer (h)</td><td style="text-align: right; font-weight: 600; color: #2563eb;">${feedSpacerMil} mil (${spacerMm} mm)</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Hydraulic Dia (d_h)</td><td style="text-align: right; font-weight: 600; color: #2563eb;">${hydDia} mm</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Element Diameter</td><td style="text-align: right; font-weight: 600;">${geom.diameter_inch || (modelDisplay.includes('8040') ? '8.0' : '4.0')}" (${modelDisplay.includes('8040') ? '203' : '101'} mm)</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Element Length</td><td style="text-align: right; font-weight: 600;">${geom.length_inch || '40.0'}" (1016 mm)</td></tr>
                             </table>
                         </div>
@@ -6836,11 +6871,11 @@ window.openMembraneDatasheetModal = async function(modelName) {
                                 <i class="fa-solid fa-shield-halved"></i> Operating Limits
                             </h4>
                             <table style="width: 100%; font-size: 0.82rem; border-collapse: collapse;">
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Max Pressure</td><td style="text-align: right; font-weight: 600;">${mem.max_pressure_bar || 41.0} bar (${Math.round((mem.max_pressure_bar || 41.0) * 14.5038)} psi)</td></tr>
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Max Feed Flow</td><td style="text-align: right; font-weight: 600;">${mem.max_feed_flow_m3h || 16.0} m³/h</td></tr>
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Max Temperature</td><td style="text-align: right; font-weight: 600;">${mem.max_temperature_c || 45.0} °C</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Max Pressure</td><td style="text-align: right; font-weight: 600;">${maxBar} bar (${Math.round(maxBar * 14.5038)} psi)</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Max Feed Flow</td><td style="text-align: right; font-weight: 600;">${maxFlow} m³/h</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">Max Temperature</td><td style="text-align: right; font-weight: 600;">${maxTemp} °C</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Max Turbidity / SDI</td><td style="text-align: right; font-weight: 600;">${limits.max_turbidity_ntu || 1.0} NTU / SDI ${limits.max_sdi || 5.0}</td></tr>
-                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">pH Range (Cont.)</td><td style="text-align: right; font-weight: 600;">${limits.ph_continuous || '2.0 – 11.0'}</td></tr>
+                                <tr><td style="color: var(--text-secondary); padding: 4px 0;">pH Range (Cont.)</td><td style="text-align: right; font-weight: 600;">${phRange}</td></tr>
                                 <tr><td style="color: var(--text-secondary); padding: 4px 0;">Free Chlorine</td><td style="text-align: right; font-weight: 600; color: #dc2626;">&lt; 0.1 mg/L</td></tr>
                             </table>
                         </div>
