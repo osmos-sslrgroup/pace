@@ -9,6 +9,136 @@ from uf_engine import UFEngine
 from calc_engine import ROEngine
 from membrane_database import MembraneDatabase
 
+# Feed-water key  ->  engine ion key (single list used by every solver in this module)
+ION_KEYS = [
+    ("calcium", "Ca"), ("magnesium", "Mg"), ("sodium", "Na"),
+    ("potassium", "K"), ("chloride", "Cl"), ("sulfate", "SO4"),
+    ("bicarbonate", "HCO3"), ("barium", "Ba"), ("strontium", "Sr"),
+    ("fluoride", "F"), ("silica", "SiO2"), ("boron", "B"),
+    ("nitrate", "NO3"), ("phosphate", "PO4"), ("ammonium", "NH4"),
+    ("aluminium", "Al"), ("iron", "Fe"), ("manganese", "Mn")
+]
+
+
+def _tds(ions: Dict[str, float]) -> float:
+    """TDS on the Toray DS2 basis: all ions + SiO2 + B; dissolved CO2 excluded."""
+    return sum(v for k, v in ions.items() if k != "CO2" and isinstance(v, (int, float)))
+
+
+def _cfg_dict(obj) -> Dict[str, Any]:
+    """Dict from a dict, a Pydantic model or None."""
+    if obj is None:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    if hasattr(obj, "dict"):
+        return obj.dict()
+    return {}
+
+
+_PRE_LOC = ("pre", "feed", "pre-treatment", "pretreatment", "pre_treatment", "ro_feed", "before ro")
+_POST_LOC = ("post", "permeate", "product", "post-treatment", "posttreatment", "post_treatment", "after ro")
+_INTER_LOC = ("interstage", "inter-stage", "inter_stage", "between passes", "pass2_feed", "pass 2 feed")
+
+
+def _location(cfg: Dict[str, Any]) -> str:
+    """'pre' / 'post' / 'interstage' / '' from a location-type field of a config block."""
+    loc = str(cfg.get("location") or cfg.get("dosing_point") or cfg.get("position") or "").strip().lower()
+    if cfg.get("apply_to_feed"):
+        return "pre"
+    if loc in _PRE_LOC:
+        return "pre"
+    if loc in _POST_LOC:
+        return "post"
+    if loc in _INTER_LOC:
+        return "interstage"
+    return ""
+
+
+def _resolve_conditioning(input_data: Dict[str, Any], two_pass: bool = False) -> Dict[str, Any]:
+    """
+    Read every chemical-dosing and degasser setting the UI can send and sort them into
+    dosing points:  pre (RO feed), interstage (2-pass only), post (product).
+
+    Accepted shapes (any mix):
+      conditioning.feed_conditioning / pre_conditioning / pre      -> pre
+      conditioning.permeate_conditioning / post_conditioning / post-> post
+      conditioning.interstage_conditioning / interstage            -> interstage
+      conditioning = {enabled, chemical, target_ph, location|dosing_point|apply_to_feed}
+          (flat block; without a location it stays interstage for 2-pass and
+           post for single pass, as in the original code — a note is returned)
+      degasser / feed_degasser            -> pre    (unless it carries a location)
+      permeate_degasser / post_degasser   -> post
+      interstage_degasser                 -> interstage
+    """
+    cond = _cfg_dict(input_data.get("conditioning"))
+    out = {"pre": {}, "post": {}, "interstage": {},
+           "pre_degasser": {}, "post_degasser": {}, "interstage_degasser": {}, "notes": []}
+
+    def first(*objs):
+        for o in objs:
+            d = _cfg_dict(o)
+            if d:
+                return d
+        return {}
+
+    out["pre"] = first(cond.get("feed_conditioning"), cond.get("pre_conditioning"), cond.get("pre"),
+                       input_data.get("feed_conditioning"), input_data.get("pre_conditioning"))
+    out["post"] = first(cond.get("permeate_conditioning"), cond.get("post_conditioning"), cond.get("post"),
+                        input_data.get("permeate_conditioning"), input_data.get("post_conditioning"))
+    out["interstage"] = first(cond.get("interstage_conditioning"), cond.get("interstage"),
+                              input_data.get("interstage_conditioning"))
+
+    # Flat conditioning block
+    if any(k in cond for k in ("enabled", "chemical", "target_ph", "co2_degassing")):
+        loc = _location(cond)
+        if not loc:
+            loc = "interstage" if two_pass else "post"
+            if cond.get("enabled"):
+                out["notes"].append(
+                    f"Conditioning block has no dosing location — applied as "
+                    f"{'interstage (before pass 2)' if two_pass else 'post-treatment (product)'}. "
+                    f"Send location='pre' (or apply_to_feed=True) for RO feed dosing.")
+        if not out[loc]:
+            out[loc] = cond
+
+    # Degassers
+    for key, default_loc in (("degasser", "pre"), ("feed_degasser", "pre"), ("pre_degasser", "pre"),
+                             ("permeate_degasser", "post"), ("post_degasser", "post"),
+                             ("interstage_degasser", "interstage")):
+        for src in (input_data.get(key), cond.get(key)):
+            d = _cfg_dict(src)
+            if d:
+                loc = _location(d) or default_loc
+                if loc == "interstage" and not two_pass:
+                    loc = "post"
+                if not out[f"{loc}_degasser"]:
+                    out[f"{loc}_degasser"] = d
+    return out
+
+
+def _conditioning_info(step: Dict[str, Any], dosing_cfg: Dict[str, Any], ph_in: float, co2_in: float) -> Dict[str, Any]:
+    """Report block for one dosing point (kept compatible with the old keys)."""
+    return {
+        "enabled": bool(dosing_cfg.get("enabled", False)),
+        "chemical": step["chemical"] or dosing_cfg.get("chemical"),
+        "dose_mg_l": step["dose_mg_l"],
+        "target_ph": step["ph"],                 # pH actually reached (old key name)
+        "ph_in": round(ph_in, 3),
+        "ph_out": step["ph"],
+        "co2_in_mg_l": round(co2_in, 3),
+        "co2_out_mg_l": step["co2_mg_l"],
+        "co2_removed_mg_l": step["co2_removed_mg_l"],
+        "degasser_applied": step["degasser_applied"],
+        "degasser_co2_in_mg_l": step.get("degasser_co2_in_mg_l"),
+        "degasser_co2_out_mg_l": step.get("degasser_co2_out_mg_l"),
+        "degasser_ph_in": step.get("degasser_ph_in"),
+        "degasser_ph_out": step.get("degasser_ph_out"),
+        "notes": step["notes"],
+    }
+
 
 def _compute_nf_concentrate_scaling(conc_ions: Dict[str, float], feed_ph: float, temp_c: float) -> Dict[str, Any]:
     """
@@ -47,9 +177,11 @@ def _compute_nf_concentrate_scaling(conc_ions: Dict[str, float], feed_ph: float,
     sqrt_I = math.sqrt(max(I, 1e-12))
 
     def log_gamma(z):
+        """Calculate log10 activity coefficient for ion charge z using the Davies equation."""
         return -A_dav * z * z * (sqrt_I / (1.0 + sqrt_I) - 0.3 * I)
 
     def gamma(z):
+        """Calculate activity coefficient gamma for ion charge z."""
         return 10.0 ** log_gamma(z)
 
     def mol(ion):
@@ -135,9 +267,51 @@ def _compute_nf_concentrate_scaling(conc_ions: Dict[str, float], feed_ph: float,
 
 class SystemEngine:
     def __init__(self):
+        """Initialize SystemEngine with UF and RO calculation engines."""
         self.uf_engine = UFEngine()
         self.ro_engine = ROEngine()
-        
+
+    # ------------------------------------------------------------------
+    # Shared helpers (used by calculate_system and the recycle solver)
+    # ------------------------------------------------------------------
+    def _run_uf(self, feed: Dict[str, Any], input_data: Dict[str, Any], gross_flow: float) -> Dict[str, Any]:
+        """Run the UF engine on a given gross (fresh) feed flow."""
+        return self.uf_engine.simulate_uf(
+            gross_feed_flow_m3h=gross_flow,
+            temp_c=feed.get("temperature", 25.0),
+            module_name=input_data.get("uf_module", "PERMA-UF-i0875s40"),
+            feed_turbidity=feed.get("turbidity", 20.0),
+            feed_tss=feed.get("tss", 30.0),
+            feed_tds=feed.get("tds", sum([v for k, v in feed.items() if isinstance(v, (int, float)) and k not in ["temperature", "ph", "turbidity", "tss", "tds"]])),
+            feed_ph=feed.get("ph", 7.3)
+        )
+
+    @staticmethod
+    def _condition_feed(ions: Dict[str, float], feed: Dict[str, Any], input_data: Dict[str, Any],
+                        two_pass: bool = False):
+        """
+        Pre-treatment: acid/caustic dosing then decarbonator on the RO feed, ONCE.
+        Returns (conditioned_ions, info_dict_or_None, feed_ph_after).
+        info["co2_out_mg_l"] is the free CO2 of the treated feed (used for permeate pH).
+        """
+        from conditioning import condition_water, co2_from_ph, _num
+        cfg = _resolve_conditioning(input_data, two_pass=two_pass)
+        pre, degas = cfg["pre"], cfg["pre_degasser"]
+        feed_ph = _num(feed.get("ph", feed.get("pH")), 7.0)
+        co2_in = feed.get("co2") or feed.get("carbon_dioxide") or co2_from_ph(ions.get("HCO3", 0.0), feed_ph)
+        if not (pre.get("enabled") or degas.get("enabled") or pre.get("co2_degassing")):
+            return dict(ions), None, feed_ph
+        step = condition_water(ions, feed_ph, pre, degas, co2_mg_l=co2_in, label="Pre-treatment")
+        info = _conditioning_info(step, pre, feed_ph, co2_in)
+        info["notes"] = cfg["notes"] + info["notes"]
+        return step["ions"], info, step["ph"]
+
+    @staticmethod
+    def _carbonate_ph(hco3_mg_l: float, co2_mg_l: float, fallback: float):
+        from conditioning import ph_from_carbonate
+        ph = ph_from_carbonate(hco3_mg_l, co2_mg_l)
+        return round(ph, 2) if ph is not None else fallback
+
     def calculate_system(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Main entry point for system calculation.
@@ -153,9 +327,12 @@ class SystemEngine:
         - elements_per_vessel: int
         """
         train = input_data.get("technology_train", "RO")
-        feed = input_data["feed_water"]
+        # FIX: work on a copy — the dosed pH used to be written back into the caller's
+        # feed, so any repeat call (membrane recommender, ageing, re-calculate) saw the
+        # feed already at the target pH and dosed nothing.
+        feed = dict(input_data["feed_water"])
         target_flow = input_data["target_flow_m3h"]
-        
+
         result = {
             "technology_train": train,
             "feed_water_used": feed,
@@ -167,23 +344,21 @@ class SystemEngine:
         if "UF" in train:
             # The system feed flow enters the UF.
             # UF engine expects gross_feed_flow_m3h (intake limited).
-            uf_res = self.uf_engine.simulate_uf(
-                gross_feed_flow_m3h=target_flow,
-                temp_c=feed.get("temperature", 25.0),
-                module_name=input_data.get("uf_module", "PERMA-UF-i0875s40"),
-                feed_turbidity=feed.get("turbidity", 20.0),
-                feed_tss=feed.get("tss", 30.0),
-                feed_tds=feed.get("tds", sum([v for k,v in feed.items() if isinstance(v, (int, float)) and k not in ["temperature", "ph", "turbidity", "tss", "tds"]])),
-                feed_ph=feed.get("ph", 7.3)
-            )
+            # RECYCLE FIX: the recycle solver sizes the UF once on the FRESH feed and
+            # passes the result in, so the recycle never goes through the UF.
+            uf_res = input_data.get("_uf_results_override") or self._run_uf(feed, input_data, target_flow)
             result["uf_results"] = uf_res
-            
+
             # The feed to the RO/NF system is the UF product
             ro_feed_flow = uf_res["overview"]["net_product_m3h"]
         else:
             # No UF, RO feed is direct from system feed flow
             ro_feed_flow = target_flow
-            
+
+        # RECYCLE FIX: recycle solver sets the RO pass feed (fresh + recycle) directly
+        if input_data.get("_ro_feed_flow_override") is not None:
+            ro_feed_flow = float(input_data["_ro_feed_flow_override"])
+
         # Standalone UF train (CHANGE 9)
         if train == "UF":
             eco_params = input_data.get("economic_params") or {}
@@ -193,15 +368,19 @@ class SystemEngine:
             q_net = uf_summary.get("net_product_m3h", target_flow)
             q_annual = q_net * hours_pa
 
-            uf_modules = uf_res.get("sizing", {}).get("total_modules", 1)
-            uf_unit_cost = eco_params.get("uf_module_cost_inr", 65000.0)
+            uf_modules = uf_summary.get("total_modules", uf_res.get("sizing", {}).get("total_modules", 1))
+            uf_module_name = input_data.get("uf_module", "PERMA-UF-i0875s40")
+            uf_mod = MembraneDatabase.get_uf_module(uf_module_name)
+            uf_unit_cost = eco_params.get("uf_module_cost") or eco_params.get("uf_module_cost_inr") or uf_mod.get("unit_cost_inr", 100000.0)
             uf_capex_mem = uf_modules * uf_unit_cost
             uf_equip_sub = uf_capex_mem * 2.0
-            ic_factor = eco_params.get("installation_factor", 0.15)
+            ic_factor = eco_params.get("ic_factor") if eco_params.get("ic_factor") is not None else eco_params.get("installation_factor", 0.15)
             cont_factor = eco_params.get("contingency_factor", 0.10)
             uf_capex_total = uf_equip_sub * (1.0 + ic_factor) * (1.0 + cont_factor)
 
-            uf_kw = uf_res.get("power", {}).get("total_kw", 0.0)
+            feed_kw = uf_mod.get("feed_pump_kw_per_module", 0.75)
+            bw_kw = uf_mod.get("backwash_pump_kw_per_module", 1.10)
+            uf_kw = (feed_kw + bw_kw) * uf_modules
             tariff = eco_params.get("electricity_tariff", 7.50)
             uf_energy_pa = uf_kw * hours_pa * tariff
             uf_life = eco_params.get("uf_membrane_lifetime", 7.0)
@@ -211,7 +390,13 @@ class SystemEngine:
 
             discount_rate = eco_params.get("discount_rate", 0.10)
             project_life = eco_params.get("project_life", 20.0)
-            crf = (discount_rate * ((1 + discount_rate) ** project_life)) / (((1 + discount_rate) ** project_life) - 1) if discount_rate > 0 else 0.05
+            if project_life <= 0:
+                crf = 0.0
+            elif discount_rate > 0:
+                denom = ((1.0 + discount_rate) ** project_life) - 1.0
+                crf = (discount_rate * ((1.0 + discount_rate) ** project_life)) / denom if denom > 0 else (1.0 / project_life)
+            else:
+                crf = 1.0 / project_life
             annualised_capex = uf_capex_total * crf
             cost_per_kl = (annualised_capex + uf_opex_total) / max(1.0, q_annual)
 
@@ -249,19 +434,28 @@ class SystemEngine:
             }
             
             # Feed conditioning and degasser before RO bisection (CHANGE 3 & 4)
-            cond_cfg = input_data.get("conditioning") or {}
-            feed_cond_cfg = cond_cfg.get("feed_conditioning") or (cond_cfg if cond_cfg.get("apply_to_feed", False) else {})
-            feed_degas_cfg = input_data.get("degasser") or {}
-            if feed_cond_cfg.get("enabled", False) or feed_degas_cfg.get("enabled", False):
-                from conditioning import apply_conditioning
-                ions, feed_dose, cond_feed_ph = apply_conditioning(ions, feed_cond_cfg, feed_degas_cfg)
-                feed["ph"] = cond_feed_ph
-                result["feed_conditioning"] = {
-                    "dose_mg_l": feed_dose,
-                    "target_ph": cond_feed_ph,
-                    "chemical": feed_cond_cfg.get("chemical")
-                }
-            
+            # RECYCLE FIX: skipped when the recycle solver has already conditioned the
+            # fresh feed (otherwise the recycled concentrate is acid-dosed again).
+            from conditioning import co2_from_ph, condition_water, _num
+            ro_feed_co2 = None
+            if not input_data.get("_feed_preconditioned", False):
+                ions, feed_cond_info, cond_feed_ph = self._condition_feed(ions, feed, input_data)
+                if feed_cond_info:
+                    feed["ph"] = cond_feed_ph
+                    result["feed_conditioning"] = feed_cond_info
+                    ro_feed_co2 = feed_cond_info["co2_out_mg_l"]
+            else:
+                ro_feed_co2 = input_data.get("_feed_co2_mg_l")
+                if input_data.get("_feed_conditioning_info"):
+                    result["feed_conditioning"] = input_data["_feed_conditioning_info"]  # for OPEX
+            ro_feed_ph = _num(feed.get("ph"), 7.0)
+            if ro_feed_co2 is None:
+                ro_feed_co2 = co2_from_ph(ions.get("HCO3", 0.0), ro_feed_ph)
+            # Treated RO feed (after pre-treatment) — used by the physics / ageing engine
+            result["ro_feed_ions"] = dict(ions)
+            result["ro_feed_ph"] = round(ro_feed_ph, 3)
+            result["ro_feed_co2_mg_l"] = round(ro_feed_co2, 3)
+
             # Determine starting pressure based on TDS (rough estimate for converging solver)
             est_osmotic_bar = (sum(ions.values()) / 1000.0) * 0.7 # rough rule of thumb
             
@@ -270,7 +464,7 @@ class SystemEngine:
             
             low_p = max(1.0, est_osmotic_bar - 5.0)
             high_p = max(120.0, est_osmotic_bar + 60.0)
-            tol = 0.005 # 0.5% tolerance on recovery
+            tol = input_data.get("_recovery_tol", 0.005) # 0.5% tolerance on recovery (recycle solver: 0.05%)
             
             ro_res = None
             for _ in range(25):
@@ -298,20 +492,47 @@ class SystemEngine:
             
             result["ro_results"] = ro_res
 
-            # Permeate conditioning and degasser after RO results (CHANGE 3 & 4)
-            perm_cond_cfg = cond_cfg.get("permeate_conditioning") or (cond_cfg if not cond_cfg.get("apply_to_feed", False) else {})
-            perm_degas_cfg = input_data.get("permeate_degasser") or {}
-            if perm_cond_cfg.get("enabled", False) or perm_degas_cfg.get("enabled", False):
-                from conditioning import apply_conditioning
-                raw_perm_ions = ro_res["summary"].get("perm_ions", {}).copy()
-                conditioned_perm_ions, perm_dose, cond_perm_ph = apply_conditioning(raw_perm_ions, perm_cond_cfg, perm_degas_cfg)
-                ro_res["summary"]["conditioned_perm_ions"] = conditioned_perm_ions
-                ro_res["summary"]["perm_ph"] = cond_perm_ph
-                result["permeate_conditioning"] = {
-                    "dose_mg_l": perm_dose,
-                    "target_ph": cond_perm_ph,
-                    "chemical": perm_cond_cfg.get("chemical")
-                }
+            # ----------------------------------------------------------------
+            # CARBONATE TRACKING through the RO (FIX 20 Nov 2026)
+            # Free CO2 passes the membrane (~0 % rejection), so permeate and
+            # concentrate carry the RO-feed CO2; their pH follows from HCO3/CO2.
+            # (Toray Nadhi check: permeate pH 4.47 vs DS2 4.49; conc 6.67 vs 6.60)
+            # ----------------------------------------------------------------
+            s_ro = ro_res["summary"]
+            raw_perm_ions = {k: v for k, v in s_ro.get("perm_ions", {}).items() if k != "CO2"}
+            conc_ions_ro = s_ro.get("conc_ions", {})
+            s_ro["feed_ph"] = round(ro_feed_ph, 2)
+            s_ro["feed_co2_mg_l"] = round(ro_feed_co2, 3)
+            s_ro["perm_co2_mg_l"] = round(ro_feed_co2, 3)
+            if s_ro.get("perm_ph") is None:
+                s_ro["perm_ph"] = self._carbonate_ph(raw_perm_ions.get("HCO3", 0.0), ro_feed_co2,
+                                                     round(max(4.5, ro_feed_ph - 1.5), 2))
+            if s_ro.get("conc_ph") is None:
+                s_ro["conc_ph"] = self._carbonate_ph(conc_ions_ro.get("HCO3", 0.0), ro_feed_co2, ro_feed_ph)
+            s_ro["ro_perm_ph"] = s_ro["perm_ph"]          # RO permeate before post-treatment
+
+            # Post-treatment: decarbonator then caustic / acid trim on the product
+            cfg_all = _resolve_conditioning(input_data)
+            post_cfg, post_degas = cfg_all["post"], cfg_all["post_degasser"]
+            if post_cfg.get("enabled") or post_degas.get("enabled") or post_cfg.get("co2_degassing"):
+                ph_in = s_ro["perm_ph"]
+                step = condition_water(raw_perm_ions, ph_in, post_cfg, post_degas,
+                                       co2_mg_l=ro_feed_co2, label="Post-treatment")
+                s_ro["conditioned_perm_ions"] = step["ions"]
+                s_ro["product_ions"] = step["ions"]
+                s_ro["product_tds"] = _tds(step["ions"])
+                s_ro["product_ph"] = step["ph"]
+                s_ro["product_co2_mg_l"] = step["co2_mg_l"]
+                s_ro["perm_ph"] = step["ph"]              # old behaviour: perm_ph = final pH
+                info = _conditioning_info(step, post_cfg, ph_in, ro_feed_co2)
+                if not input_data.get("_feed_preconditioned"):
+                    info["notes"] = [n for n in cfg_all["notes"] if "post" in n] + info["notes"]
+                result["permeate_conditioning"] = info
+            else:
+                s_ro["product_ions"] = raw_perm_ions
+                s_ro["product_tds"] = _tds(raw_perm_ions)
+                s_ro["product_ph"] = s_ro["perm_ph"]
+                s_ro["product_co2_mg_l"] = round(ro_feed_co2, 3)
 
             # ----------------------------------------------------------------
             # NF-SPECIFIC ANALYSIS (feed quality, concentrate scaling, hard stop)
@@ -332,6 +553,7 @@ class SystemEngine:
                 feed_ph   = feed.get("ph", 7.0) or 7.0
 
                 def _fq(code, sev, msg, val=None, lim=None):
+                    """Record a feed water quality limit check result."""
                     entry = {"type": code, "severity": sev, "message": msg}
                     if val is not None: entry["value"] = round(val, 3)
                     if lim is not None: entry["limit"] = lim
@@ -566,9 +788,20 @@ class SystemEngine:
                 as_cost_kg = as_costs.get(as_type, 280.0)
                 antiscalant_cost_pa = 0.0
                 if input_data.get("antiscalant_dosed", True):
-                    antiscalant_cost_pa = (ro_feed_flow * hours_pa * (as_dose / 1000.0)) * as_cost_kg
+                    # RECYCLE FIX: antiscalant is dosed into the fresh RO feed, not the recycle
+                    as_flow = input_data.get("_antiscalant_flow_m3h", ro_feed_flow)
+                    antiscalant_cost_pa = (as_flow * hours_pa * (as_dose / 1000.0)) * as_cost_kg
 
-                total_opex_pa = energy_cost_pa + total_mem_repl_pa + uf_chem_cost_pa + antiscalant_cost_pa
+                # FIX 20 Nov 2026: pH-dosing chemicals were never costed for single-pass RO
+                chem_price = eco_params.get("chemical_cost_per_kg", 20.0)   # INR/kg, 100 % basis
+                fc = result.get("feed_conditioning") or {}
+                pc = result.get("permeate_conditioning") or {}
+                as_flow_chem = input_data.get("_antiscalant_flow_m3h", ro_feed_flow)
+                chem_kg_pa = (fc.get("dose_mg_l", 0.0) * as_flow_chem
+                              + pc.get("dose_mg_l", 0.0) * summary.get("perm_flow", 0.0)) / 1000.0 * hours_pa
+                ph_chem_cost_pa = chem_kg_pa * chem_price
+
+                total_opex_pa = energy_cost_pa + total_mem_repl_pa + uf_chem_cost_pa + antiscalant_cost_pa + ph_chem_cost_pa
                 
                 # Cost per KL
                 discount_rate = eco_params.get("discount_rate", 0.10)
@@ -606,6 +839,7 @@ class SystemEngine:
                         "membrane_repl_pa_inr": round(total_mem_repl_pa, 2),  # kept for backward compat
                         "uf_ceb_chemicals_pa_inr": round(uf_chem_cost_pa, 2),
                         "antiscalant_cost_pa_inr": round(antiscalant_cost_pa, 2),
+                        "chemical_cost_pa_inr": round(ph_chem_cost_pa, 2),
                         "total_opex_pa_inr": round(total_opex_pa, 2)
                     },
                     "metrics": {
@@ -629,164 +863,269 @@ class SystemEngine:
 
     def calculate_system_with_recycle(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Wrapper around calculate_system() that implements concentrate recycle.
-        Iteratively blends a fraction of the last-stage concentrate back into
-        the fresh feed until steady state is reached.
+        Concentrate recycle on the Toray DS2 / WAVE basis (rewritten 20 Nov 2026).
 
-        Additional input_data keys:
-          - recycle_ratio: float 0.0–1.0 (fraction of concentrate recycled)
+        Inputs (in addition to the calculate_system keys):
+          target_flow_m3h      FRESH (raw) feed to the system, m3/h
+          target_recovery_pct  SYSTEM recovery = product / fresh RO feed, %  (held fixed)
+          recycle_flow_m3h     recycle flow, m3/h (Toray input; takes priority), or
+          recycle_ratio        fraction of the TOTAL concentrate returned to the HP-pump
+                               suction, 0 to < 0.95
+
+        Method (same order as Toray DS2):
+          1. Pretreat the FRESH feed only: UF sized on the fresh flow (once), then pH
+             conditioning / degasser (once)                -> treated feed  F, Ct
+          2. Flow balance:  Qp = Rsys*F,  Qd = F - Qp,  Qpass = F + Qr,
+             Rpass = Qp / Qpass                            (pass recovery is a RESULT)
+          3. Concentrate from the OVERALL salt balance (recycle does not enter it):
+                 Cc = (F*Ct - Qp*Cp) / Qd
+          4. Blend:  Cb = (F*Ct + Qr*Cc) / Qpass
+          5. Solve the RO pass at Qpass, Rpass, Cb -> new Cp. Repeat 3-5 until Cp, Qp
+             and Cc settle (only Cp is unknown, so this closes in 2-4 passes).
+          6. Check the salt balance  F*Ct = Qp*Cp + Qd*Cc  and report a Toray-style
+             stream table.
         """
-        recycle_ratio = input_data.get("recycle_ratio", 0.0)
+        rec_flow_in = input_data.get("recycle_flow_m3h")
+        rec_flow_in = float(rec_flow_in) if rec_flow_in not in (None, "") else 0.0
+        recycle_ratio = float(input_data.get("recycle_ratio", 0.0) or 0.0)
 
-        # If recycle is 0 or negligible, just call the normal path
-        if recycle_ratio <= 0.001:
+        # No recycle -> normal path
+        if rec_flow_in <= 1e-6 and recycle_ratio <= 0.001:
             return self.calculate_system(input_data)
 
-        # 1. Run baseline (0% recycle) calculation to return at the top-level
-        baseline_input = dict(input_data)
-        baseline_input.pop("recycle_enabled", None)
-        baseline_input.pop("recycle_ratio", None)
-        final_result = self.calculate_system(baseline_input)
+        train = input_data.get("technology_train", "RO")
+        if not ("RO" in train or "NF" in train):
+            return self.calculate_system(input_data)
 
-        feed = input_data["feed_water"]
-        fresh_flow = input_data["target_flow_m3h"]
+        feed = dict(input_data["feed_water"])          # never mutate the caller's feed
+        fresh_flow = float(input_data["target_flow_m3h"])
+        r_sys = float(input_data.get("target_recovery_pct", 75.0)) / 100.0
+        warnings: List[Dict[str, Any]] = []
 
-        # Build fresh-feed ion dict (same extraction as calculate_system)
-        ion_keys = [
-            ("calcium", "Ca"), ("magnesium", "Mg"), ("sodium", "Na"),
-            ("potassium", "K"), ("chloride", "Cl"), ("sulfate", "SO4"),
-            ("bicarbonate", "HCO3"), ("barium", "Ba"), ("strontium", "Sr"),
-            ("fluoride", "F"), ("silica", "SiO2"), ("boron", "B"),
-            ("nitrate", "NO3"), ("phosphate", "PO4"), ("ammonium", "NH4"),
-            ("aluminium", "Al"), ("iron", "Fe"), ("manganese", "Mn")
-        ]
-        fresh_ions = {}
-        for feed_key, engine_key in ion_keys:
-            fresh_ions[engine_key] = feed.get(feed_key, 0)
+        # ---- Step 1: pretreatment of the FRESH feed (once) -----------------------
+        uf_res = None
+        if "UF" in train:
+            uf_res = self._run_uf(feed, input_data, fresh_flow)
+            F = float(uf_res["overview"]["net_product_m3h"])   # fresh RO feed
+        else:
+            F = fresh_flow
 
-        # Iteration state
-        max_iter = 15
-        tolerance = 0.002  # 0.2 % relative change in permeate flow
-        q_r_prev = 0.0
-        c_r_prev = {k: v for k, v in fresh_ions.items()}  # placeholder
-        q_p_prev = None
+        raw_ions = {ek: float(feed.get(fk, 0.0) or 0.0) for fk, ek in ION_KEYS}
+        treated, cond_info, treated_ph = self._condition_feed(raw_ions, feed, input_data)
+        treated = {k: float(treated.get(k, 0.0) or 0.0) for k in raw_ions}
+        from conditioning import co2_from_ph
+        # Free CO2 of the treated feed; the recycle carries about the same CO2
+        # (CO2 passes the membrane), so the blend CO2 is taken equal to it.
+        treated_co2 = cond_info["co2_out_mg_l"] if cond_info else co2_from_ph(treated.get("HCO3", 0.0), treated_ph)
 
+        # ---- Step 2: flow balance -------------------------------------------------
+        qp_target = r_sys * F
+        qd_target = F - qp_target
+        if qd_target <= 0:
+            raise ValueError("System recovery must be below 100 % when recycle is used.")
+
+        if rec_flow_in > 1e-6:
+            Qr = rec_flow_in
+            recycle_basis = "flow"
+            recycle_ratio = Qr / (Qr + qd_target)            # report as fraction of total conc
+        else:
+            if recycle_ratio >= 0.95:
+                raise ValueError("recycle_ratio must be < 0.95 (fraction of total concentrate).")
+            Qr = recycle_ratio * qd_target / (1.0 - recycle_ratio)
+            recycle_basis = "fraction of total concentrate"
+
+        Qpass = F + Qr
+        r_pass = qp_target / Qpass
+
+        # ---- Steps 3-5: iterate on permeate quality only -----------------------
+        cp = {k: 0.0 for k in treated}        # first guess: perfect rejection
+        qp = qp_target
+        max_iter = 20
+        tol = 1e-4                            # 0.01 % on Qp and on concentrate TDS
         converged = False
         result = None
         iterations_used = 0
+        blended_feed = None
+        c_blend = dict(treated)
+        c_conc = dict(treated)
 
-        for iteration in range(max_iter):
-            iterations_used = iteration + 1
+        for it in range(1, max_iter + 1):
+            iterations_used = it
+            qd = F - qp
 
-            # 1. Blend feed
-            q_blend = fresh_flow + q_r_prev
-            c_blend = {}
-            for ion in fresh_ions:
-                c_blend[ion] = (fresh_ions[ion] * fresh_flow + c_r_prev.get(ion, 0) * q_r_prev) / q_blend
+            # Step 3: concentrate from the overall balance
+            c_conc = {k: max(0.0, (F * treated[k] - qp * cp.get(k, 0.0)) / qd) for k in treated}
+            # Step 4: blend of treated fresh feed + recycle
+            c_blend = {k: (F * treated[k] + Qr * c_conc[k]) / Qpass for k in treated}
 
-            # 2. Build a modified input_data with blended feed
             blended_feed = dict(feed)
-            for feed_key, engine_key in ion_keys:
-                blended_feed[feed_key] = c_blend[engine_key]
-            blended_feed["tds"] = sum(c_blend.values())
+            for fk, ek in ION_KEYS:
+                blended_feed[fk] = c_blend[ek]
+            blended_feed["tds"] = _tds(c_blend)
+            # Blend pH from blend HCO3 and CO2 (Toray Nadhi: treated 6.00 -> blend 6.16)
+            blend_ph = self._carbonate_ph(c_blend.get("HCO3", 0.0), treated_co2, treated_ph)
+            blended_feed["ph"] = blend_ph
 
-            modified_input = dict(input_data)
-            modified_input["feed_water"] = blended_feed
-            modified_input["target_flow_m3h"] = q_blend
-            # Remove recycle keys so nested call doesn't recurse
-            modified_input.pop("recycle_enabled", None)
-            modified_input.pop("recycle_ratio", None)
-
-            # 3. Call the EXISTING engine (completely unchanged)
-            result = self.calculate_system(modified_input)
-
-            # 4. Extract concentrate info from RO results
+            # Step 5: solve the pass at Qpass / Rpass (no UF rerun, no re-dosing)
+            run = dict(input_data)
+            for key in ("recycle_enabled", "recycle_ratio", "recycle_flow_m3h"):
+                run.pop(key, None)
+            run.update({
+                "feed_water": blended_feed,
+                "target_flow_m3h": fresh_flow,
+                "target_recovery_pct": r_pass * 100.0,
+                "_ro_feed_flow_override": Qpass,
+                "_uf_results_override": uf_res,
+                "_feed_preconditioned": True,
+                "_feed_co2_mg_l": treated_co2,
+                "_feed_conditioning_info": cond_info,
+                "_recovery_tol": 0.0005,
+                "_antiscalant_flow_m3h": F,
+            })
+            result = self.calculate_system(run)
             ro_res = result.get("ro_results")
             if not ro_res:
+                warnings.append({"type": "Recycle solver: RO pass returned no result"})
                 break
 
-            summary = ro_res["summary"]
-            q_p = summary.get("perm_flow", 0)
-            q_c = summary.get("conc_flow", 0)
+            s = ro_res["summary"]
+            qp_new = float(s.get("perm_flow", 0.0))
+            cp_new = {k: float(s.get("perm_ions", {}).get(k, 0.0)) for k in treated}
+            qd_new = F - qp_new
+            if qd_new <= 0:
+                warnings.append({"type": "Recycle solver: permeate exceeds fresh feed"})
+                break
+            c_conc_new = {k: max(0.0, (F * treated[k] - qp_new * cp_new[k]) / qd_new) for k in treated}
 
-            # Get concentrate ions from the last element of the RO system
-            elements_data = ro_res.get("elements", [])
-            if elements_data:
-                last_elem = elements_data[-1]
-                c_c = last_elem.get("rej_ions", c_r_prev)
-            else:
-                c_c = c_r_prev
+            d_qp = abs(qp_new - qp) / max(qp, 1e-9)
+            d_cc = abs(_tds(c_conc_new) - _tds(c_conc)) / max(_tds(c_conc), 1e-9)
+            cp, qp = cp_new, qp_new
+            if d_qp < tol and d_cc < tol:
+                converged = True
+                c_conc = c_conc_new
+                break
 
-            # 5. Update recycle stream
-            q_r_new = recycle_ratio * q_c
-            c_r_new = {k: v for k, v in c_c.items()}
+        if result is None or not result.get("ro_results"):
+            # Fall back to a plain run so the caller still gets a result
+            fallback = self.calculate_system(input_data)
+            fallback["recycle"] = {"enabled": True, "converged": False, "warnings": warnings}
+            return fallback
 
-            # 6. Check convergence
-            if q_p_prev is not None and q_p_prev > 0:
-                delta = abs(q_p - q_p_prev) / q_p_prev
-                if delta < tolerance:
-                    converged = True
-                    q_r_prev = q_r_new
-                    c_r_prev = c_r_new
-                    break
+        # ---- Step 6: balance check and reporting ---------------------------------
+        ro_res = result["ro_results"]
+        s = ro_res["summary"]
+        qp = float(s["perm_flow"])
+        qd = F - qp
+        q_conc_total = float(s.get("conc_flow", Qr + qd))
+        conc_engine = {k: float(s.get("conc_ions", {}).get(k, 0.0)) for k in treated}
+        perm_ions = {k: float(s.get("perm_ions", {}).get(k, 0.0)) for k in treated}
 
-            # 7. Store for next iteration
-            q_r_prev = q_r_new
-            c_r_prev = c_r_new
-            q_p_prev = q_p
+        salt_in = F * _tds(treated)
+        salt_out = qp * _tds(perm_ions) + qd * _tds(conc_engine)
+        balance_err_pct = (salt_out - salt_in) / salt_in * 100.0 if salt_in > 0 else 0.0
+        if abs(balance_err_pct) > 0.5:
+            warnings.append({"type": "Recycle mass balance error > 0.5 %",
+                             "value": round(balance_err_pct, 2), "limit": 0.5})
+        if not converged:
+            warnings.append({"type": f"Recycle loop did not converge in {max_iter} iterations"})
+        if abs(q_conc_total - (Qr + qd)) > 0.01 * max(q_conc_total, 1e-9):
+            warnings.append({"type": "Recycle flow split mismatch",
+                             "value": round(q_conc_total, 3), "limit": round(Qr + qd, 3)})
 
-        # 8. Add recycle metrics
-        fresh_flow = input_data["target_flow_m3h"]
+        system_recovery = qp / F if F > 0 else 0.0
+        pass_recovery = qp / Qpass if Qpass > 0 else 0.0
+        p_feed = float(s.get("feed_pressure_bar", 0.0))
+        p_conc = float(s.get("conc_pressure_bar", 0.0))
 
-        # 8. Augment the baseline final_result with recycle metadata
-        if result:
-            q_p_final = 0
-            feed_pressure_final = 0.0
-            perm_tds_final = 0.0
-            if result.get("ro_results"):
-                ro_sum = result["ro_results"]["summary"]
-                q_p_final = ro_sum.get("perm_flow", 0)
-                feed_pressure_final = ro_sum.get("feed_pressure_bar", 0.0)
-                perm_tds_final = ro_sum.get("perm_tds", 0.0)
+        # Pass-level summary keeps the engine's own numbers; add system-level ones
+        s["pass_recovery"] = pass_recovery
+        s["system_recovery"] = system_recovery
+        s["fresh_feed_flow"] = F
+        s["recycle_flow"] = Qr
+        s["drain_flow"] = qd
+        s["treated_feed_tds"] = _tds(treated)
+        s["blend_feed_tds"] = _tds(c_blend)
 
-            effective_recovery = q_p_final / fresh_flow if fresh_flow > 0 else 0
+        streams = [{"no": 1, "name": "Raw feed", "flow_m3h": fresh_flow,
+                    "tds_mg_l": _tds(raw_ions), "pressure_bar": 0.0, "ph": feed.get("ph", 7.0)}]
+        if uf_res:
+            streams.append({"no": 2, "name": "UF product (fresh RO feed)", "flow_m3h": F,
+                            "tds_mg_l": _tds(raw_ions), "pressure_bar": 0.0, "ph": feed.get("ph", 7.0)})
+        streams += [
+            {"no": 3, "name": "Treated feed", "flow_m3h": F, "tds_mg_l": _tds(treated),
+             "pressure_bar": 0.0, "ph": treated_ph},
+            {"no": 4, "name": "Feed to pass (treated feed + recycle)", "flow_m3h": Qpass,
+             "tds_mg_l": _tds(c_blend), "pressure_bar": p_feed, "ph": blended_feed.get("ph", treated_ph)},
+            {"no": 5, "name": "Total concentrate", "flow_m3h": Qr + qd,
+             "tds_mg_l": _tds(conc_engine), "pressure_bar": p_conc, "ph": s.get("conc_ph")},
+            {"no": 6, "name": "Recycle", "flow_m3h": Qr,
+             "tds_mg_l": _tds(conc_engine), "pressure_bar": p_conc, "ph": s.get("conc_ph")},
+            {"no": 7, "name": "Concentrate to drain", "flow_m3h": qd,
+             "tds_mg_l": _tds(conc_engine), "pressure_bar": p_conc, "ph": s.get("conc_ph")},
+            {"no": 8, "name": "Product", "flow_m3h": qp,
+             "tds_mg_l": _tds(s.get("product_ions") or perm_ions),
+             "pressure_bar": float(s.get("permeate_pressure_bar", 0.0)), "ph": s.get("product_ph")},
+        ]
+        for st in streams:
+            st["flow_m3h"] = round(st["flow_m3h"], 3)
+            st["tds_mg_l"] = round(st["tds_mg_l"], 2)
+            st["pressure_bar"] = round(st["pressure_bar"], 2)
 
-            result["recycle"] = {
-                "enabled": True,
-                "recycle_ratio": recycle_ratio,
-                "recycle_flow_m3h": round(q_r_prev, 4),
-                "blended_feed_flow_m3h": round(fresh_flow + q_r_prev, 4),
-                "blended_feed_tds_mg_l": round(result["feed_water_used"].get("tds", 0.0), 1),
-                "blended_feed_ions": c_blend,   # converged blended ions for physics engine
-                "fresh_feed_flow_m3h": fresh_flow,
-                "iterations_to_converge": iterations_used,
-                "converged": converged,
-                "effective_system_recovery": round(effective_recovery, 4),
-                "effective_system_recovery_pct": round(effective_recovery * 100, 2),
-                "feed_pressure_bar": round(feed_pressure_final, 2),
-                "permeate_tds_mg_l": round(perm_tds_final, 1)
-            }
+        result["feed_water_used"] = input_data["feed_water"]      # fresh feed, not the blend
+        result["blended_feed_water"] = blended_feed
+        result["target_flow_m3h"] = fresh_flow
+        result["target_recovery_pct"] = r_sys * 100.0
+        if cond_info:
+            result["feed_conditioning"] = cond_info
 
-            if not converged:
-                result["recycle"]["warning"] = "Recycle loop did not converge within {} iterations".format(max_iter)
-
-            return result
-
-        return final_result
+        result["recycle"] = {
+            "enabled": True,
+            "basis": recycle_basis,
+            "recycle_ratio": round(recycle_ratio, 4),           # fraction of total concentrate
+            "recycle_flow_m3h": round(Qr, 4),
+            "recycle_pct_of_fresh_feed": round(Qr / F * 100.0, 2) if F > 0 else 0.0,
+            "fresh_feed_flow_m3h": fresh_flow,
+            "fresh_ro_feed_flow_m3h": round(F, 4),
+            "blended_feed_flow_m3h": round(Qpass, 4),
+            "blended_feed_tds_mg_l": round(_tds(c_blend), 1),
+            "blended_feed_ions": c_blend,                        # converged blend for physics engine
+            "treated_feed_ions": treated,
+            "treated_feed_tds_mg_l": round(_tds(treated), 1),
+            "concentrate_ions": conc_engine,
+            "concentrate_tds_mg_l": round(_tds(conc_engine), 1),
+            "total_concentrate_flow_m3h": round(Qr + qd, 4),
+            "drain_flow_m3h": round(qd, 4),
+            "pass_recovery_pct": round(pass_recovery * 100.0, 2),
+            "effective_system_recovery": round(system_recovery, 4),
+            "effective_system_recovery_pct": round(system_recovery * 100.0, 2),
+            "feed_pressure_bar": round(p_feed, 2),
+            "permeate_tds_mg_l": round(_tds(perm_ions), 2),
+            "mass_balance_error_pct": round(balance_err_pct, 3),
+            "iterations_to_converge": iterations_used,
+            "converged": converged,
+            "streams": streams,
+            "warnings": warnings,
+        }
+        if not converged:
+            result["recycle"]["warning"] = "Recycle loop did not converge within {} iterations".format(max_iter)
+        return result
 
     def simulate_two_pass_system(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Orchestrates 2-Pass RO with interstage conditioning and recycle"""
         import sys
         import os
         sys.path.append(os.path.dirname(__file__))
-        from conditioning import apply_conditioning
-        
+        from conditioning import condition_water, co2_from_ph, _num
+
         pass1_cfg = input_data.get("pass1", {})
         pass2_cfg = input_data.get("pass2", {})
         cond_cfg = input_data.get("conditioning", {})
         rec_cfg = input_data.get("recycle", {})
-        feed = input_data["feed_water"]
+        feed = dict(input_data["feed_water"])          # FIX: never mutate the caller's feed
         fresh_flow = input_data["target_flow_m3h"]
+        # FIX 20 Nov 2026: pre-treatment, interstage and post-treatment dosing points
+        # and their degassers are all read here (pre/post were ignored in 2P-RO before)
+        cond_points = _resolve_conditioning(input_data, two_pass=True)
         
         ion_keys = [
             ("calcium", "Ca"), ("magnesium", "Mg"), ("sodium", "Na"),
@@ -797,9 +1136,17 @@ class SystemEngine:
             ("aluminium", "Al"), ("iron", "Fe"), ("manganese", "Mn")
         ]
         fresh_ions = {ek: feed.get(fk, 0.0) for fk, ek in ion_keys}
-        
+
+        # Pre-treatment (acid + decarbonator) on the FRESH feed, once
+        pre_info = None
+        fresh_ions, pre_info, feed_ph_treated = self._condition_feed(fresh_ions, feed, input_data, two_pass=True)
+        fresh_ions = {ek: fresh_ions.get(ek, 0.0) for _, ek in ion_keys}
+        feed_co2 = pre_info["co2_out_mg_l"] if pre_info else co2_from_ph(fresh_ions.get("HCO3", 0.0), feed_ph_treated)
+        inter_info = None
+
         # Helper to convert Pydantic to dict if needed
         def to_dict(obj):
+            """Convert Pydantic model or mapping to standard Python dict."""
             if hasattr(obj, "dict"): return obj.dict()
             return obj if isinstance(obj, dict) else {}
             
@@ -814,11 +1161,12 @@ class SystemEngine:
         else:
             recycle_ratio = getattr(rec_cfg, "recycle_ratio", 0.0) if recycle_enabled else 0.0
             
-        max_iter = 15
-        tolerance = 0.002
+        max_iter = 40          # FIX: was 15 — salt in the loop settles slower than flow
+        tolerance = 0.001
         q_r_prev = 0.0
         c_r_prev = {k: 0.0 for k in fresh_ions}
         q_p2_prev = None
+        tds_r_prev = None      # FIX: convergence now also checks recycle TDS
         
         converged = False
         final_p1_res = None
@@ -852,7 +1200,8 @@ class SystemEngine:
                     vessels_per_stage=pass1_cfg.get("vessels_per_stage", [4,2]),
                     elements_per_vessel=pass1_cfg.get("elements_per_vessel", 6),
                     permeate_pressure_bar=input_data.get("permeate_pressure_bar", input_data.get("permeate_backpressure", 0.0)),
-                    enable_booster=input_data.get("enable_booster", False)
+                    enable_booster=input_data.get("enable_booster", False),
+                    interboost_dp_bar=input_data.get("interboost_dp_bar", None)
                 )
                 rec = p1_res["summary"]["total_recovery"]
                 if abs(rec - p1_target_rec) < 0.005: break
@@ -862,7 +1211,28 @@ class SystemEngine:
             p1_perm_flow = p1_res["summary"]["perm_flow"]
             p1_perm_ions = p1_res["summary"]["perm_ions"]
             
-            p2_feed_ions, cond_dose, cond_ph = apply_conditioning(p1_perm_ions, cond_cfg)
+            # Pass-1 permeate pH from HCO3 and CO2 (CO2 passes the membrane)
+            p1_perm_ions = {k: v for k, v in p1_perm_ions.items() if k not in ("CO2", "pH")}
+            p1_perm_ph = p1_res["summary"].get("perm_ph")
+            if p1_perm_ph is None:
+                p1_perm_ph = self._carbonate_ph(p1_perm_ions.get("HCO3", 0.0), feed_co2,
+                                                round(max(4.5, feed_ph_treated - 1.5), 2))
+                p1_res["summary"]["perm_ph"] = p1_perm_ph
+            p1_res["summary"]["perm_co2_mg_l"] = round(feed_co2, 3)
+            p1_res["summary"]["feed_co2_mg_l"] = round(feed_co2, 3)
+            p1_res["summary"]["feed_ph"] = round(feed_ph_treated, 2)
+            if p1_res["summary"].get("conc_ph") is None:
+                p1_res["summary"]["conc_ph"] = self._carbonate_ph(
+                    p1_res["summary"].get("conc_ions", {}).get("HCO3", 0.0), feed_co2, feed_ph_treated)
+
+            # Interstage: decarbonator and/or caustic before pass 2
+            inter_cfg, inter_degas = cond_points["interstage"], cond_points["interstage_degasser"]
+            step = condition_water(p1_perm_ions, p1_perm_ph, inter_cfg, inter_degas,
+                                   co2_mg_l=feed_co2, label="Interstage")
+            p2_feed_ions = step["ions"]
+            cond_dose = step["dose_mg_l"]
+            p2_feed_ph, p2_feed_co2 = step["ph"], step["co2_mg_l"]
+            inter_info = _conditioning_info(step, inter_cfg, p1_perm_ph, feed_co2)
             
             p2_est_osmotic = (sum(p2_feed_ions.values()) / 1000.0) * 0.7
             p2_low = max(1.0, p2_est_osmotic - 2.0)
@@ -910,8 +1280,9 @@ class SystemEngine:
                     vessels_per_stage=p2_vessels_per_stage,
                     elements_per_vessel=p2_elems_per_vessel,
                     beta_cap=None,
-                    permeate_pressure_bar=pass2_cfg.get("permeate_pressure_bar", 0.0),
-                    enable_booster=pass2_cfg.get("enable_booster", False)
+                    permeate_pressure_bar=pass2_cfg.get("permeate_pressure_bar", input_data.get("permeate_pressure_bar", input_data.get("permeate_backpressure", 0.0))),
+                    enable_booster=pass2_cfg.get("enable_booster", input_data.get("enable_booster", False)),
+                    interboost_dp_bar=pass2_cfg.get("interboost_dp_bar", input_data.get("interboost_dp_bar", None))
                 )
                 rec = p2_res["summary"]["total_recovery"]
                 if abs(rec - p2_target_rec) < 0.005: break
@@ -925,9 +1296,11 @@ class SystemEngine:
             q_r_new = recycle_ratio * p2_conc_flow
             c_r_new = p2_conc_ions.copy()
             
-            if q_p2_prev is not None and q_p2_prev > 0:
+            tds_r_new = _tds(c_r_new)
+            if q_p2_prev is not None and q_p2_prev > 0 and tds_r_prev:
                 delta = abs(p2_perm_flow - q_p2_prev) / q_p2_prev
-                if delta < tolerance:
+                delta_tds = abs(tds_r_new - tds_r_prev) / tds_r_prev
+                if delta < tolerance and delta_tds < tolerance:
                     converged = True
                     q_r_prev = q_r_new
                     c_r_prev = c_r_new
@@ -938,21 +1311,51 @@ class SystemEngine:
             q_r_prev = q_r_new
             c_r_prev = c_r_new
             q_p2_prev = p2_perm_flow
+            tds_r_prev = tds_r_new
             final_p1_res = p1_res
             final_p2_res = p2_res
             
+        # Pass-2 permeate pH, then post-treatment on the final product
+        post_info = None
+        if final_p2_res:
+            s2 = final_p2_res["summary"]
+            p2_perm = {k: v for k, v in s2.get("perm_ions", {}).items() if k not in ("CO2", "pH")}
+            if s2.get("perm_ph") is None:
+                s2["perm_ph"] = self._carbonate_ph(p2_perm.get("HCO3", 0.0), p2_feed_co2,
+                                                   round(max(4.5, p2_feed_ph - 1.0), 2))
+            s2["perm_co2_mg_l"] = round(p2_feed_co2, 3)
+            s2["ro_perm_ph"] = s2["perm_ph"]
+            post_cfg, post_degas = cond_points["post"], cond_points["post_degasser"]
+            if post_cfg.get("enabled") or post_degas.get("enabled") or post_cfg.get("co2_degassing"):
+                ph_in = s2["perm_ph"]
+                pstep = condition_water(p2_perm, ph_in, post_cfg, post_degas,
+                                        co2_mg_l=p2_feed_co2, label="Post-treatment")
+                s2["conditioned_perm_ions"] = pstep["ions"]
+                s2["product_ions"], s2["product_tds"] = pstep["ions"], _tds(pstep["ions"])
+                s2["product_ph"], s2["product_co2_mg_l"] = pstep["ph"], pstep["co2_mg_l"]
+                s2["perm_ph"] = pstep["ph"]
+                post_info = _conditioning_info(pstep, post_cfg, ph_in, p2_feed_co2)
+            else:
+                s2["product_ions"], s2["product_tds"] = p2_perm, _tds(p2_perm)
+                s2["product_ph"], s2["product_co2_mg_l"] = s2["perm_ph"], round(p2_feed_co2, 3)
+
         eco_params = to_dict(input_data.get("economic_params", {}))
         economics = None
         if eco_params and final_p1_res and final_p2_res:
-            economics = self._calculate_two_pass_economics(eco_params, pass1_cfg, pass2_cfg, final_p1_res, final_p2_res, cond_dose, p1_perm_flow)
+            # chemical kg/h of the pre- and post-treatment points, added to the interstage dose
+            extra_chem_kg_h = ((pre_info or {}).get("dose_mg_l", 0.0) * fresh_flow
+                               + (post_info or {}).get("dose_mg_l", 0.0) * final_p2_res["summary"]["perm_flow"]) / 1000.0
+            economics = self._calculate_two_pass_economics(eco_params, pass1_cfg, pass2_cfg, final_p1_res, final_p2_res,
+                                                           cond_dose, p1_perm_flow, extra_chem_kg_h=extra_chem_kg_h)
 
         return {
             "technology_train": input_data.get("technology_train", "2P-RO"),
             "feed_water_used": input_data["feed_water"],
             "pass1_results": final_p1_res,
             "pass2_results": final_p2_res,
-            "ro_membrane": pass1_cfg.get("ro_membrane", "BW30-400"),
-            "pass2_membrane": pass2_cfg.get("ro_membrane", "BW30-400"),
+            # FIX: configs use the key "membrane" (report always showed BW30-400)
+            "ro_membrane": pass1_cfg.get("membrane", pass1_cfg.get("ro_membrane", "BW30-400")),
+            "pass2_membrane": pass2_cfg.get("membrane", pass2_cfg.get("ro_membrane", "BW30-400")),
             "uf_module": input_data.get("uf_module", "PERMA-UF-i0875s40"),
             "stages_count": pass1_cfg.get("stages", 2),
             "vessels_per_stage": pass1_cfg.get("vessels_per_stage", [4, 2]),
@@ -960,11 +1363,20 @@ class SystemEngine:
             "target_recovery_pct": input_data.get("target_recovery_pct", 75.0),
             "target_flow_m3h": input_data.get("target_flow_m3h", 50.0),
             "conditioning": {
-                "enabled": cond_cfg.get("enabled", False),
-                "target_ph": cond_cfg.get("target_ph"),
-                "chemical": cond_cfg.get("chemical"),
-                "dose_mg_l": round(cond_dose, 2)
+                # interstage block (old keys kept for the UI)
+                "enabled": bool((inter_info or {}).get("enabled", False)),
+                "target_ph": (inter_info or {}).get("ph_out", cond_cfg.get("target_ph")),
+                "chemical": (inter_info or {}).get("chemical", cond_cfg.get("chemical")),
+                "dose_mg_l": round(cond_dose, 2),
+                "interstage": inter_info,
+                "notes": cond_points["notes"] + ((inter_info or {}).get("notes") or []),
             },
+            "feed_conditioning": pre_info,
+            "permeate_conditioning": post_info,
+            # Treated pass-1 fresh feed (after pre-treatment) — used by the physics engine
+            "ro_feed_ions": dict(fresh_ions),
+            "ro_feed_ph": round(feed_ph_treated, 3),
+            "ro_feed_co2_mg_l": round(feed_co2, 3),
             "recycle": {
                 "enabled": recycle_enabled,
                 "recycle_ratio": recycle_ratio,
@@ -1004,7 +1416,9 @@ class SystemEngine:
             "economics": economics
         }
 
-    def _calculate_two_pass_economics(self, eco_params, pass1_cfg, pass2_cfg, p1_res, p2_res, cond_dose, p1_perm_flow):
+    def _calculate_two_pass_economics(self, eco_params, pass1_cfg, pass2_cfg, p1_res, p2_res, cond_dose, p1_perm_flow,
+                                     extra_chem_kg_h: float = 0.0):
+        """Calculate combined capital and operating expenditures for two-pass RO system."""
         mem1_price = 26880.0
         mem2_price = 26880.0
         
@@ -1037,8 +1451,9 @@ class SystemEngine:
         mem_life = eco_params.get("membrane_lifetime", 5.0)
         mem_repl_pa = c_membranes / mem_life if mem_life > 0 else 0.0
         
-        chem_kg_pa = (cond_dose / 1000.0) * p1_perm_flow * hours_pa
-        chem_cost_pa = chem_kg_pa * 20.0
+        # interstage dose + pre/post-treatment doses (FIX: pre/post were not costed)
+        chem_kg_pa = ((cond_dose / 1000.0) * p1_perm_flow + extra_chem_kg_h) * hours_pa
+        chem_cost_pa = chem_kg_pa * eco_params.get("chemical_cost_per_kg", 20.0)
         
         total_opex_pa = energy_cost_pa + mem_repl_pa + chem_cost_pa
         

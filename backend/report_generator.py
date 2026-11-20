@@ -48,6 +48,7 @@ plt.rcParams.update({
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _set_cell_bg(cell, color_hex):
+    """Set the background color fill of a docx table cell."""
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     tcPr = cell._element.get_or_add_tcPr()
@@ -56,6 +57,7 @@ def _set_cell_bg(cell, color_hex):
     tcPr.append(shading)
 
 def conv_flow(val, units_dict):
+    """Convert flow rate value from m3/h to user-specified unit."""
     to_unit = units_dict.get('flow', 'm3/h')
     if to_unit == 'm3/d': return val * 24.0
     if to_unit == 'gpm': return val * 4.40287
@@ -63,6 +65,7 @@ def conv_flow(val, units_dict):
     return val
 
 def conv_press(val, units_dict):
+    """Convert pressure value from bar to user-specified unit."""
     to_unit = units_dict.get('pressure', 'bar')
     if to_unit == 'psi': return val * 14.5038
     if to_unit == 'MPa': return val * 0.1
@@ -70,23 +73,28 @@ def conv_press(val, units_dict):
     return val
 
 def conv_flux(val, units_dict):
+    """Convert membrane flux from LMH to user-specified unit."""
     to_unit = units_dict.get('flux', 'LMH')
     if to_unit == 'GFD': return val * 0.589
     return val
 
 def lbl_flow(units_dict):
+    """Return the display label for the selected flow unit."""
     u = units_dict.get('flow', 'm3/h')
     if u == 'm3/h': return 'm³/h'
     if u == 'm3/d': return 'm³/d'
     return u
 
 def lbl_press(units_dict):
+    """Return the display label for the selected pressure unit."""
     return units_dict.get('pressure', 'bar')
 
 def lbl_flux(units_dict):
+    """Return the display label for the selected flux unit."""
     return units_dict.get('flux', 'LMH')
 
 def _set_cell_border(cell, **kw):
+    """Set custom borders on a table cell using oxml elements."""
     tc   = cell._tc
     tcPr = tc.get_or_add_tcPr()
     bdr  = OxmlElement('w:tcBorders')
@@ -100,20 +108,18 @@ def _set_cell_border(cell, **kw):
     tcPr.append(bdr)
 
 def _thin(color=HEX_BORDER):
+    """Return thin border XML specification dictionary."""
     s = {"sz": "4", "val": "single", "color": color}
     return {"top": s, "left": s, "bottom": s, "right": s}
 
 def _no_border():
+    """Return borderless XML specification dictionary."""
     s = {"sz": "0", "val": "none", "color": "auto"}
     return {"top": s, "left": s, "bottom": s, "right": s}
 
-def _set_cell_bg(cell, hex_col):
-    tcPr = cell._tc.get_or_add_tcPr()
-    shd  = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{hex_col}" w:color="auto" w:val="clear"/>')
-    tcPr.append(shd)
-
 def _cell_text(cell, text, bold=False, italic=False, size=9, color=BLACK,
                align=WD_ALIGN_PARAGRAPH.LEFT):
+    """Format and insert styled text into a docx table cell."""
     p = cell.paragraphs[0]
     p.alignment = align
     p.paragraph_format.space_before = Pt(0)
@@ -124,6 +130,7 @@ def _cell_text(cell, text, bold=False, italic=False, size=9, color=BLACK,
     r.font.name = 'Calibri'; r.font.size = Pt(size)
 
 def _run(para, text, bold=False, size=9.5, color=BLACK, italic=False):
+    """Append a formatted run to a paragraph and return it."""
     r = para.add_run(str(text))
     r.bold = bold; r.italic = italic
     r.font.color.rgb = color
@@ -131,15 +138,18 @@ def _run(para, text, bold=False, size=9.5, color=BLACK, italic=False):
     return r
 
 def _col_w(table, ci, cm_val):
+    """Set the width of column ci across all rows of a docx table."""
     for row in table.rows:
         row.cells[ci].width = Cm(cm_val)
 
 def _spacer(doc, pt=4):
+    """Insert an empty paragraph with bottom spacing."""
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(0)
     p.paragraph_format.space_after  = Pt(pt)
 
 def _heading(doc, text, size=11):
+    """Insert a styled heading paragraph."""
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(6)
     p.paragraph_format.space_after  = Pt(3)
@@ -218,6 +228,7 @@ def _data_table(doc, headers, rows, col_widths=None):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _chart_bytes(fig):
+    """Save a matplotlib figure to an in-memory PNG buffer and return it."""
     buf = io.BytesIO()
     fig.savefig(buf, format='png', bbox_inches='tight', dpi=150)
     buf.seek(0)
@@ -396,14 +407,21 @@ def _chart_tds_profile(elements, figsize=(5.5, 2.6)):
 
 
 def _chart_capex_pie(capex, figsize=(4.0, 3.0)):
+    """Generate a pie chart breakdown of CAPEX categories."""
     labels = ['Membranes', 'Vessels', 'HP Pump', 'Booster', 'Install+Cont.']
+    mem_cost = capex.get('membranes_inr', 0) + capex.get('uf_membranes_inr', 0) + capex.get('uf_modules_inr', 0)
     vals   = [
-        capex.get('membranes_inr', 0),
+        mem_cost,
         capex.get('vessels_inr', 0),
-        capex.get('hp_pump_inr', 0),
+        capex.get('hp_pump_inr', 0) + capex.get('uf_pumps_inr', 0),
         capex.get('booster_pump_inr', 0),
         capex.get('ic_inr', 0) + capex.get('contingency_inr', 0),
     ]
+    if sum(vals) <= 0:
+        return None
+    # Omit pie chart when standalone-UF has positive membrane cost but lacks itemized equipment breakdown
+    if capex.get('uf_membranes_inr', 0) > 0 and sum(vals[1:]) == 0:
+        return None
     colors = [CHART_BRAND, CHART_BLUE, CHART_ORANGE, CHART_GRAY, '#9C27B0']
     fig, ax = plt.subplots(figsize=figsize)
     wedges, texts, autotexts = ax.pie(
@@ -418,9 +436,29 @@ def _chart_capex_pie(capex, figsize=(4.0, 3.0)):
 
 
 def _chart_opex_bar(opex, figsize=(4.0, 2.6)):
+    """Generate a bar chart of annual OPEX items."""
     labels = ['Energy', 'Membrane Repl.']
-    vals   = [opex.get('energy_cost_pa_inr', 0), opex.get('membrane_repl_pa_inr', 0)]
+    vals   = [
+        opex.get('energy_cost_pa_inr', 0),
+        opex.get('membrane_repl_pa_inr', 0) or opex.get('uf_mem_repl_pa_inr', 0)
+    ]
     colors = [CHART_ORANGE, CHART_BLUE]
+
+    as_cost = opex.get('antiscalant_cost_pa_inr', 0)
+    if as_cost > 0:
+        labels.append('Antiscalant')
+        vals.append(as_cost)
+        colors.append('#9C27B0')
+
+    uf_chem = opex.get('uf_ceb_chemicals_pa_inr', 0)
+    if uf_chem > 0:
+        labels.append('UF Chemicals')
+        vals.append(uf_chem)
+        colors.append('#00BCD4')
+
+    if sum(vals) <= 0:
+        return None
+
     fig, ax = plt.subplots(figsize=figsize)
     bars = ax.bar(labels, [v/1e5 for v in vals], color=colors, alpha=0.85, width=0.45)
     ax.set_title('Annual OPEX Breakdown')
@@ -459,6 +497,7 @@ def _insert_two_charts(doc, buf1, buf2, width_in=3.0):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _add_header_block(doc, proj_name):
+    """Add the company branding header table to the document."""
     tbl = doc.add_table(rows=1, cols=2)
     tbl.autofit = True
     left = tbl.rows[0].cells[0]
@@ -485,6 +524,7 @@ def _add_header_block(doc, proj_name):
 
 
 def _add_footer(doc, proj_name, date_str):
+    """Add a styled footer with project metadata and page numbers to all sections."""
     for section in doc.sections:
         footer = section.footer
         footer.is_linked_to_previous = False
@@ -516,9 +556,11 @@ def _add_footer(doc, proj_name, date_str):
 
 class ReportGenerator:
     def __init__(self):
+        """Initialize ReportGenerator with today's date formatted as DD/MM/YYYY."""
         self.today = datetime.now().strftime('%d/%m/%Y')
 
     def _chart_pfd_diagram(self, ro_results, sr):
+        """Render a process flow diagram chart from RO simulation results."""
         if not ro_results:
             return None
         
@@ -544,16 +586,19 @@ class ReportGenerator:
         
         # Helper to draw text
         def txt(x, y, s, color='#1e293b', size=7.5, weight='normal', ha='center', zorder=3):
+            """Draw styled text onto the matplotlib axis."""
             ax.text(x, y, s, color=color, fontsize=size, fontweight=weight, ha=ha, va='center', fontfamily='DejaVu Sans', zorder=zorder)
 
         # Helper to draw rect
         from matplotlib.patches import FancyBboxPatch, Circle, Polygon, Ellipse
         def draw_rect(x, y, w, h, fill, stroke, rx=0.1, zorder=2):
+            """Draw a rounded rectangle onto the matplotlib axis."""
             p = FancyBboxPatch((x, y), w, h, boxstyle=f"round,pad=0,rounding_size={rx}", facecolor=fill, edgecolor=stroke, linewidth=1.2, zorder=zorder)
             ax.add_patch(p)
             
         # Helper to draw lines
         def draw_line(x1, y1, x2, y2, color, lw=1.5, style='-', zorder=1):
+            """Draw a straight line segment onto the matplotlib axis."""
             ax.plot([x1, x2], [y1, y2], color=color, linewidth=lw, linestyle=style, zorder=zorder)
 
         # Draw PFD Header background
@@ -616,6 +661,7 @@ class ReportGenerator:
         
         # Helper function to size block height
         def stH(n):
+            """Calculate the vertical height of an n-vessel stage block."""
             return n * N_VH + (n - 1) * N_VGY
             
         for si, nv in enumerate(vps):
@@ -727,6 +773,7 @@ class ReportGenerator:
         return _chart_bytes(fig)
 
     def _setup_doc(self):
+        """Create and configure a base python-docx Document with custom margins and typography."""
         doc = Document()
         for s in doc.sections:
             s.top_margin = Cm(1.5); s.bottom_margin = Cm(1.8)
@@ -738,6 +785,7 @@ class ReportGenerator:
     # ── Page 1: Cover + System Overview ─────────────────────────────────────
 
     def _render_pfd_svg(self, svg_str):
+        """Convert an SVG diagram string into a high-resolution PNG image buffer."""
         import tempfile, os, io
         from svglib.svglib import svg2rlg
         from reportlab.graphics import renderPM
@@ -758,6 +806,7 @@ class ReportGenerator:
             return None
 
     def _page_uf_overview(self, doc, sr):
+        """Build the Ultrafiltration (UF) summary section of the report."""
         uf_results = sr.get('uf_results')
         if not uf_results: return
 
@@ -788,6 +837,7 @@ class ReportGenerator:
         doc.add_page_break()
 
     def _page_system_overview(self, doc, sr):
+        """Build the RO cover and system overview section including project info and flow diagram."""
         pd = sr.get('project_details', {})
         proj_name = pd.get('name') or sr.get('project_name', 'PACE Report')
         _add_header_block(doc, proj_name)
@@ -860,7 +910,28 @@ class ReportGenerator:
         flux_lbl = lbl_flux(ud)
 
         _heading(doc, 'RO Flow Table (Stream Level)')
-        _data_table(doc,
+        rec_streams = (sr.get('recycle') or {}).get('streams')
+        if rec_streams:
+            # Recycle run: full Toray-style stream table (raw, treated, blend, recycle, drain, product)
+            _data_table(doc,
+                [['#', 'Description', f'Flow ({flow_lbl})', 'TDS (mg/L)', f'Pressure ({press_lbl})', 'pH']],
+                [[str(st.get('no', '')), st.get('name', ''),
+                  f"{conv_flow(st.get('flow_m3h', 0), ud):.2f}", f"{st.get('tds_mg_l', 0):.1f}",
+                  f"{conv_press(st.get('pressure_bar', 0), ud):.1f}",
+                  f"{st['ph']:.2f}" if isinstance(st.get('ph'), (int, float)) else '—']
+                 for st in rec_streams],
+                col_widths=[0.7, 6.0, 2.2, 2.2, 2.0, 1.3])
+            rc = sr['recycle']
+            rec = rc.get('effective_system_recovery_pct', rec)
+            p = doc.add_paragraph()
+            _run(p, f"System recovery {rc.get('effective_system_recovery_pct', 0):.1f} %  |  "
+                    f"Pass recovery {rc.get('pass_recovery_pct', 0):.1f} %  |  "
+                    f"Recycle {conv_flow(rc.get('recycle_flow_m3h', 0), ud):.2f} {flow_lbl} "
+                    f"({rc.get('recycle_ratio', 0)*100:.0f} % of concentrate)  |  "
+                    f"Mass balance error {rc.get('mass_balance_error_pct', 0):.2f} %", size=8, italic=True)
+            _spacer(doc)
+        else:
+          _data_table(doc,
             [['#', 'Description', f'Flow ({flow_lbl})', 'TDS (mg/L)', f'Pressure ({press_lbl})']],
             [
                 ['1', 'Raw Feed to RO System',           f"{conv_flow(sr.get('target_flow_m3h', sm.get('feed_flow', 0)), ud):.1f}",  f"{sm.get('feed_tds', 0):.1f}", '0.0'],
@@ -869,8 +940,8 @@ class ReportGenerator:
                 ['6', 'Net Product from RO System',       f"{conv_flow(sm.get('perm_flow', 0), ud):.1f}",  f"{sm.get('perm_tds', 0):.2f}", '0.0'],
             ],
             col_widths=[0.7, 6.5, 2.5, 2.5, 2.2]
-        )
-        _spacer(doc)
+          )
+          _spacer(doc)
 
         # ── System overview table ──
         vps  = sm.get('vessels_per_stage', [1])
@@ -914,6 +985,7 @@ class ReportGenerator:
             ('Specific Energy Consumption',f"{sm.get('sec_kwh_m3', 0):.3f} kWh/m³"),
             ('Temperature',                f"{sr.get('feed_water_used', {}).get('temperature', 25):.1f} °C"),
             ('Feed pH',                    f"{sr.get('feed_water_used', {}).get('ph', 7):.1f}"),
+            ('Product pH',                 f"{sm['product_ph']:.2f}" if sm.get('product_ph') is not None else '—'),
         ], widths=(7.5, 6.5))
 
         self._footnote(doc)
@@ -921,6 +993,7 @@ class ReportGenerator:
     # ── Page 2: Stage + Element flow tables ─────────────────────────────────
 
     def _page_flow_tables(self, doc, ro: dict, membrane: str, pass_label: str, sr: dict):
+        """Generate stage- and element-level RO flow tables and profile charts."""
         sm       = ro.get('summary', {})
         stages   = ro.get('stages', [])
         elements = ro.get('elements', [])
@@ -967,8 +1040,8 @@ class ReportGenerator:
         _heading(doc, f'RO Flow Table (Element Level) – {pass_label}')
         el_rows = []
         for e in elements:
-            feed_tds = sum(v for k,v in e.get('feed_ions', {}).items() if k not in ("SiO2", "B", "CO2"))
-            perm_tds = sum(v for k,v in e.get('perm_ions', {}).items() if k not in ("SiO2", "B", "CO2"))
+            feed_tds = sum(v for k,v in e.get('feed_ions', {}).items() if k not in ("B", "CO2"))
+            perm_tds = sum(v for k,v in e.get('perm_ions', {}).items() if k not in ("B", "CO2"))
             el_rows.append([
                 str(e.get('stage', '—')), str(e.get('position', '—')), membrane,
                 f"{e.get('recovery', 0)*100:.1f}",
@@ -1010,6 +1083,7 @@ class ReportGenerator:
     # ── Page 3: Ion analysis ──────────────────────────────────────────────
 
     def _page_ion_analysis(self, doc, ro: dict, fw: dict):
+        """Generate ion concentration table comparing feed, concentrate, permeate, and rejection."""
         _heading(doc, 'RO Solute Concentrations & Rejection Analysis', size=16)
         sm        = ro.get('summary', {})
         perm_ions = sm.get('perm_ions', {})
@@ -1040,8 +1114,13 @@ class ReportGenerator:
         conc_tds = sm.get('conc_tds', 0)
         rej_tds  = (1 - perm_tds / feed_tds) * 100 if feed_tds > 0 else 100.0
 
+        # Conductivity is calculated from dissolved ionic salts only (excluding neutral SiO2 and B)
+        feed_ionic = sum(fw.get(key, 0.0) for ion, key in ion_map.items() if ion not in ('SiO2', 'B'))
+        conc_ionic = sum(conc_ions.get(ion, 0.0) for ion in ion_map.keys() if ion not in ('SiO2', 'B'))
+        perm_ionic = sum(perm_ions.get(ion, 0.0) for ion in ion_map.keys() if ion not in ('SiO2', 'B'))
+
         ion_rows.append(['TDS* (mg/L)',      f'{feed_tds:.1f}', f'{conc_tds:.1f}',  f'{perm_tds:.2f}',   f'{rej_tds:.2f} %'])
-        ion_rows.append(['Conductivity (µS/cm)', f'{feed_tds*2.02:.0f}', f'{conc_tds*2.02:.0f}', f'{perm_tds*2.02:.1f}', '—'])
+        ion_rows.append(['Conductivity (µS/cm)', f'{feed_ionic*2.02:.0f}', f'{conc_ionic*2.02:.0f}', f'{perm_ionic*2.02:.1f}', '—'])
 
         _data_table(doc,
             [['Ion Species', 'Feed (mg/L)', 'Concentrate (mg/L)', 'Permeate (mg/L)', 'Rejection (%)']],
@@ -1053,10 +1132,177 @@ class ReportGenerator:
         _spacer(doc, 4)
 
         # (Ion Rejection Bar Chart and Concentration Comparison Charts removed as they are obvious from the table)
-        
+
+    # ── Chemical dosing & degasser (Toray DS2 style) ─────────────────────────
+
+    _CHEM_NAMES = {"HCl": "Hydrochloric Acid", "H2SO4": "Sulphuric Acid", "NaOH": "Sodium Hydroxide"}
+
+    @staticmethod
+    def _f(v, fmt="{:.2f}", dash="—"):
+        """Format a number or return a dash."""
+        try:
+            return fmt.format(float(v)) if v is not None else dash
+        except (TypeError, ValueError):
+            return dash
+
+    def _page_chemicals_degasser(self, doc, sr: dict):
+        """
+        Chemical dosing (100 % basis, mg/L and kg/day), degasser / decarbonator
+        performance and the carbonate (pH / HCO3 / CO2) balance through the train —
+        laid out like the Toray DS2 'Chemicals 100 %' line and stream details.
+        Shown only when a dosing point or degasser is configured.
+        """
+        ud = sr.get('units', {})
+        flow_lbl = lbl_flow(ud)
+        two_pass = bool(sr.get('pass2_results'))
+        p1 = sr.get('pass1_results') or sr.get('ro_results') or {}
+        s1 = p1.get('summary', {})
+        p2 = sr.get('pass2_results') or {}
+        s2 = p2.get('summary', {})
+        rec = sr.get('recycle') or {}
+
+        pre = sr.get('feed_conditioning') or {}
+        post = sr.get('permeate_conditioning') or {}
+        inter = (sr.get('conditioning') or {}).get('interstage') if two_pass else None
+        inter = inter or {}
+
+        # Flow at each dosing point (m3/h)
+        if rec.get('enabled'):
+            f_pre = rec.get('fresh_ro_feed_flow_m3h') or rec.get('fresh_feed_flow_m3h', 0.0)
+        elif two_pass:
+            f_pre = sr.get('target_flow_m3h', s1.get('feed_flow', 0.0))
+        else:
+            uf = (sr.get('uf_results') or {}).get('overview', {})
+            f_pre = uf.get('net_product_m3h') or s1.get('feed_flow') or sr.get('target_flow_m3h', 0.0)
+        f_inter = s1.get('perm_flow', 0.0) if two_pass else 0.0
+        f_post = (s2 if two_pass else s1).get('perm_flow', 0.0)
+
+        points = [("Pre-treatment (RO feed)", pre, f_pre)]
+        if two_pass:
+            points.append(("Interstage (Pass 2 feed)", inter, f_inter))
+        points.append(("Post-treatment (product)", post, f_post))
+
+        active = [(n, i, f) for n, i, f in points
+                  if i and (i.get('dose_mg_l', 0) or i.get('co2_removed_mg_l', 0) or i.get('enabled')
+                            or i.get('notes'))]
+        if not active:
+            return
+
+        _heading(doc, 'Chemical Dosing & Degasser', size=16)
+
+        # 1. Chemical dosing — Toray "Chemicals 100 %"
+        _heading(doc, 'Chemical Dosing (100 % basis)')
+        chem_rows, total_kg_d = [], 0.0
+        for name, info, flow in active:
+            dose = float(info.get('dose_mg_l', 0) or 0)
+            if dose <= 0:
+                continue
+            kg_d = dose * flow * 24.0 / 1000.0
+            total_kg_d += kg_d
+            chem = info.get('chemical') or '—'
+            chem_rows.append([name, self._CHEM_NAMES.get(chem, chem),
+                              f"{self._f(info.get('ph_in'))} → {self._f(info.get('ph_out'))}",
+                              f"{dose:.2f}", f"{conv_flow(flow, ud):.2f}", f"{kg_d:.2f}"])
+        if chem_rows:
+            _data_table(doc,
+                [['Dosing Point', 'Chemical', 'pH (in → out)', 'Dose (mg/L)',
+                  f'Treated Flow ({flow_lbl})', 'Consumption (kg/day)']],
+                chem_rows, col_widths=[3.6, 2.9, 2.2, 1.8, 2.2, 2.3])
+            p = doc.add_paragraph()
+            p.paragraph_format.space_before = Pt(2)
+            _run(p, f"Total chemical consumption: {total_kg_d:.2f} kg/day (100 % basis). ", size=8.5, bold=True)
+            _run(p, "Doses are estimated from the carbonate balance; divide by the commercial "
+                    "strength (e.g. 0.33 for 33 % HCl, 0.98 for 98 % H₂SO₄, 0.48 for 48 % NaOH) "
+                    "for product consumption.", size=8, italic=True)
+        else:
+            p = doc.add_paragraph()
+            _run(p, 'No acid or caustic dosing.', italic=True, size=9, color=BRAND_COLOR)
+        _spacer(doc, 6)
+
+        # 2. Degasser / decarbonator
+        degas = [(n, i) for n, i, _ in active
+                 if i.get('degasser_applied') or i.get('co2_removed_mg_l', 0)
+                 or any('degasser' in str(t).lower() for t in i.get('notes', []))]
+        if degas:
+            _heading(doc, 'Degasser / Decarbonator')
+            rows = []
+            for name, info in degas:
+                removed = float(info.get('co2_removed_mg_l', 0) or 0)
+                d_in = info.get('degasser_co2_in_mg_l')
+                d_out = info.get('degasser_co2_out_mg_l')
+                if d_in is None:                       # older result without degasser fields
+                    d_out = float(info.get('co2_out_mg_l', 0) or 0)
+                    d_in = d_out + removed
+                pct = removed / d_in * 100.0 if d_in else 0.0
+                rows.append([name, f"{float(d_in):.2f}", f"{float(d_out):.2f}", f"{removed:.2f}", f"{pct:.1f}",
+                             f"{self._f(info.get('degasser_ph_in'))} → {self._f(info.get('degasser_ph_out', info.get('ph_out')))}"])
+            _data_table(doc,
+                [['Location', 'CO₂ In (mg/L)', 'CO₂ Out (mg/L)', 'CO₂ Removed (mg/L)',
+                  'Removal (%)', 'pH (in → out)']],
+                rows, col_widths=[3.8, 2.1, 2.1, 2.4, 1.7, 2.9])
+            _spacer(doc, 6)
+
+        # 3. Carbonate balance — stream pH / HCO3 / CO2 (Toray stream details)
+        _heading(doc, 'Carbonate Balance (pH / HCO₃ / CO₂)')
+        fw = sr.get('feed_water_used', {})
+        raw_ph = pre.get('ph_in', fw.get('ph'))
+        raw_co2 = pre.get('co2_in_mg_l')
+        ro_feed_ions = sr.get('ro_feed_ions', {})
+        feed_co2 = s1.get('feed_co2_mg_l', sr.get('ro_feed_co2_mg_l'))
+        rows = [['Raw feed', self._f(raw_ph), self._f(fw.get('bicarbonate'), "{:.1f}"), self._f(raw_co2, "{:.1f}")]]
+        if pre:
+            treated = rec.get('treated_feed_ions') or ro_feed_ions
+            rows.append(['Treated feed (after pre-treatment)', self._f(pre.get('ph_out')),
+                         self._f(treated.get('HCO3'), "{:.1f}"), self._f(pre.get('co2_out_mg_l'), "{:.1f}")])
+        if rec.get('enabled'):
+            bf = sr.get('blended_feed_water', {})
+            rows.append(['Feed to pass (treated feed + recycle)', self._f(bf.get('ph', s1.get('feed_ph'))),
+                         self._f(bf.get('bicarbonate'), "{:.1f}"), self._f(feed_co2, "{:.1f}")])
+        rows.append(['Pass 1 concentrate', self._f(s1.get('conc_ph')),
+                     self._f(s1.get('conc_ions', {}).get('HCO3'), "{:.1f}"), self._f(feed_co2, "{:.1f}")])
+        rows.append(['Pass 1 permeate', self._f(s1.get('ro_perm_ph', s1.get('perm_ph'))),
+                     self._f(s1.get('perm_ions', {}).get('HCO3'), "{:.3f}"),
+                     self._f(s1.get('perm_co2_mg_l', feed_co2), "{:.1f}")])
+        last = s1
+        if two_pass:
+            p2_feed = (p2.get('elements') or [{}])[0].get('feed_ions', {})
+            rows.append(['Pass 2 feed (after interstage)', self._f(inter.get('ph_out', s1.get('perm_ph'))),
+                         self._f(p2_feed.get('HCO3'), "{:.3f}"), self._f(inter.get('co2_out_mg_l'), "{:.1f}")])
+            rows.append(['Pass 2 permeate', self._f(s2.get('ro_perm_ph', s2.get('perm_ph'))),
+                         self._f(s2.get('perm_ions', {}).get('HCO3'), "{:.3f}"),
+                         self._f(s2.get('perm_co2_mg_l'), "{:.1f}")])
+            last = s2
+        if post:
+            rows.append(['Product (after post-treatment)', self._f(last.get('product_ph')),
+                         self._f((last.get('product_ions') or {}).get('HCO3'), "{:.3f}"),
+                         self._f(last.get('product_co2_mg_l'), "{:.2f}")])
+        _data_table(doc, [['Stream', 'pH', 'HCO₃ (mg/L)', 'CO₂ (mg/L)']], rows,
+                    col_widths=[7.0, 2.2, 2.6, 2.6])
+
+        # 4. Notes from the dosing engine (why a dose was zero, location defaults, ...)
+        notes = []
+        for name, info, _ in active:
+            notes += [str(n) for n in info.get('notes', [])]
+        notes += [str(n) for n in (sr.get('conditioning') or {}).get('notes', []) if str(n) not in notes]
+        if notes:
+            p = doc.add_paragraph()
+            p.paragraph_format.space_before = Pt(4)
+            _run(p, 'Dosing notes: ', bold=True, size=8)
+            for n in dict.fromkeys(notes):
+                q = doc.add_paragraph(style=None)
+                q.paragraph_format.space_after = Pt(0)
+                _run(q, f"• {n}", size=8, italic=True, color=RED_WARN)
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(4)
+        _run(p, 'CO₂ passes the membrane, so permeate and concentrate carry the RO-feed CO₂; '
+                'their pH is calculated from HCO₃/CO₂ (pK₁ 6.35, CO₃ neglected below pH 8.3).',
+             size=8, italic=True)
+        _spacer(doc, 4)
+
     # ── Page 5: Warnings ─────────────────────────────────────────────────────
 
     def _page_warnings(self, doc, ro_results: dict, pass2_results: dict = None):
+        """Generate design warnings table for pass 1 and optional pass 2."""
         _heading(doc, 'RO Design Warnings', size=16)
 
         all_warnings = []
@@ -1163,7 +1409,8 @@ class ReportGenerator:
             from system_engine import _compute_nf_concentrate_scaling
             sm = ro_results.get('summary', {})
             conc_ions = sm.get('conc_ions', {})
-            feed_ph = ro_results.get('feed_ph', 7.0)
+            # FIX: LSI at the concentrate pH (after acid dosing); was a 7.0 default
+            feed_ph = sm.get('conc_ph') or sm.get('feed_ph') or ro_results.get('feed_ph', 7.0)
             temp_c = 25.0
             try:
                 if 'feed' in ro_results and 'temperature' in ro_results['feed']:
@@ -1195,12 +1442,19 @@ class ReportGenerator:
 
         _heading(doc, 'RO Chemical Adjustments (Pass 1 Feed vs Concentrate)')
         sm = ro_results.get('summary', {})
+        feed_ions = ro_results.get('feed_ions', {})
+        conc_ions = sm.get('conc_ions', {})
+        feed_ionic = sum(v for k, v in feed_ions.items() if k not in ('SiO2', 'B', 'CO2')) if feed_ions else max(0.0, sm.get('feed_tds', 0) - feed_ions.get('SiO2', 0))
+        conc_ionic = sum(v for k, v in conc_ions.items() if k not in ('SiO2', 'B', 'CO2')) if conc_ions else max(0.0, sm.get('conc_tds', 0) - conc_ions.get('SiO2', 0))
         _data_table(doc,
             [['Parameter', 'Pass 1 Feed', 'RO 1st Pass Conc.']],
             [
-                ['pH',                          f"{ro_results.get('feed_ph', 7.0):.1f}",  '—'],
+                ['pH',                          f"{sm.get('feed_ph', ro_results.get('feed_ph', 7.0)):.2f}",
+                                                f"{sm['conc_ph']:.2f}" if sm.get('conc_ph') is not None else '—'],
+                ['Free CO₂ (mg/L)',             f"{sm['feed_co2_mg_l']:.1f}" if sm.get('feed_co2_mg_l') is not None else '—',
+                                                f"{sm['feed_co2_mg_l']:.1f}" if sm.get('feed_co2_mg_l') is not None else '—'],
                 ['TDS* (mg/L)',                 f"{sm.get('feed_tds', 0):.1f}", f"{sm.get('conc_tds', 0):.0f}"],
-                ['Conductivity (µS/cm)',        f"{sm.get('feed_tds', 0)*2.02:.0f}", f"{sm.get('conc_tds', 0)*2.02:.0f}"],
+                ['Conductivity (µS/cm)',        f"{feed_ionic*2.02:.0f}", f"{conc_ionic*2.02:.0f}"],
                 ['CaSO₄ (% saturation)',        '—', '—'],
                 ['BaSO₄ (% saturation)',        '—', '—'],
                 ['SrSO₄ (% saturation)',        '—', '—'],
@@ -1212,6 +1466,7 @@ class ReportGenerator:
     # ── Page 6: Economics ────────────────────────────────────────────────────
 
     def _page_economics(self, doc, economics):
+        """Generate CAPEX, OPEX, and lifecycle economic metrics summary tables."""
         _heading(doc, 'Economic Analysis Summary', size=16)
 
         capex   = economics.get('capex', {})
@@ -1247,10 +1502,21 @@ class ReportGenerator:
         opex_rows = [
             ['Annual Operating Hours',       f"{opex.get('annual_hours', 0):,.0f} hrs"],
             ['Electricity / Energy Cost',    f"₹ {opex.get('energy_cost_pa_inr', 0):,.0f}"],
-            ['RO Membrane Replacement',      f"₹ {opex.get('membrane_repl_pa_inr', 0):,.0f}"],
         ]
+        has_ro_repl = opex.get('membrane_repl_pa_inr', 0) > 0
+        has_uf_repl = opex.get('uf_mem_repl_pa_inr', 0) > 0
+        if has_ro_repl:
+            opex_rows.append(['RO Membrane Replacement', f"₹ {opex.get('membrane_repl_pa_inr', 0):,.0f}"])
+        if has_uf_repl:
+            opex_rows.append(['UF Membrane Replacement', f"₹ {opex.get('uf_mem_repl_pa_inr', 0):,.0f}"])
+        if not has_ro_repl and not has_uf_repl and opex.get('membranes_repl_pa_inr', 0) > 0:
+            opex_rows.append(['Membrane Replacement', f"₹ {opex.get('membranes_repl_pa_inr', 0):,.0f}"])
+        if opex.get('antiscalant_cost_pa_inr', 0) > 0:
+            opex_rows.append(['Antiscalant Chemical Dosing', f"₹ {opex.get('antiscalant_cost_pa_inr', 0):,.0f}"])
         if opex.get('uf_ceb_chemicals_pa_inr', 0) > 0:
             opex_rows.append(['UF CEB Chemicals (Citric Acid + NaOCl)', f"₹ {opex.get('uf_ceb_chemicals_pa_inr', 0):,.0f}"])
+        if opex.get('chemical_cost_pa_inr', 0) > 0:
+            opex_rows.append(['pH Adjustment Chemicals (acid / caustic)', f"₹ {opex.get('chemical_cost_pa_inr', 0):,.0f}"])
         opex_rows.append(['TOTAL OPEX', f"₹ {opex.get('total_opex_pa_inr', 0):,.0f}"])
         _data_table(doc,
             [['Item', 'Cost (INR/year)']],
@@ -1496,6 +1762,7 @@ class ReportGenerator:
         _spacer(doc, 8)
 
     def _page_aging_summary(self, doc, aging: dict, proj_name: str):
+        """Generate membrane aging summary table including end of life and degradation mechanisms."""
         _heading(doc, 'Membrane Aging Summary', size=16)
         _spacer(doc, 6)
 
@@ -1518,10 +1785,11 @@ class ReportGenerator:
     # ── Footnote ─────────────────────────────────────────────────────────────
 
     def _footnote(self, doc):
+        """Add standard TDS and conductivity calculation footnotes to document."""
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(4)
         _run(p, 'Footnotes: ', bold=True, size=8)
-        _run(p, '*TDS and Conductivity include dissolved ionic salts only (excludes SiO₂, B, CO₂). ',
+        _run(p, '*TDS includes dissolved ionic salts and neutral SiO₂ (excludes B and CO₂). Conductivity is calculated from ionic salts only. ',
              italic=True, size=8)
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1530,6 +1798,7 @@ class ReportGenerator:
 
     def generate_calculation_report(self, system_results: dict,
                                     output_path: str = 'Calculation_Report.docx') -> str:
+        """Generate comprehensive Word calculation report from system simulation results."""
         doc   = self._setup_doc()
         sr    = system_results
         train = sr.get('technology_train', '1P-RO')
@@ -1559,6 +1828,9 @@ class ReportGenerator:
         # ── Page 3: Ion analysis ──────────────────────────────────────────────
         if ro_main:
             self._page_ion_analysis(doc, ro_main, fw)
+
+        # ── Chemical dosing & degasser (only when configured) ───────────────
+        self._page_chemicals_degasser(doc, sr)
 
         # ── Page 5: Warnings ──────────────────────────────────────────────────
         # Inject PHREEQC SI data into ro_main so _page_warnings can display it.
