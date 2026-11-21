@@ -9,11 +9,18 @@ from membrane_database import MembraneDatabase
 from report_generator import ReportGenerator
 from membrane_recommender import MembraneRecommender
 from aging_engine import AgingEngine
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Union
+
+# Elements per vessel: int (same in every stage), per-stage list [6, 3], or "6,3"
+ElementsPerVessel = Union[int, List[int], str]
 from fastapi.responses import FileResponse, RedirectResponse
 import os
 
 app = FastAPI(title="PHREEQC Scaling Engine API")
+
+# Genesys scaling / antiscalant endpoints (added 21 Nov 2026 - sent by msk on 21-11-2026)
+from scaling_api import router as scaling_router, calculate_scaling_with_ph
+app.include_router(scaling_router)
 
 import base64
 
@@ -92,6 +99,7 @@ app.add_middleware(
 pp = phreeqpython.PhreeqPython(database='phreeqc.dat')
 
 class FeedWaterData(BaseModel):
+    model_config = {"extra": "allow"}      # FIX 21 Nov 2026: keep pH-adjustment keys from the UI
     temperature: float = 25.0
     ph: float = 7.0
     calcium: float = 0.0
@@ -119,10 +127,13 @@ class FeedWaterData(BaseModel):
     # Plant operating data fields for scaling analysis
     raw_ph: Optional[float] = None
     feed_ph: Optional[float] = None
-    recovery_pct: Optional[float] = 75.0
+    target_ph: Optional[float] = None       # RO feed pH after acid / caustic dosing
+    chemical: Optional[str] = None          # HCl / H2SO4 / NaOH
+    recovery_pct: Optional[float] = 75.0    # gives concentrate SI + Genesys block
     concentration_factor: Optional[float] = None
     pressure_bar: Optional[float] = 20.0
     acid_type: Optional[str] = "H2SO4"
+    antiscalant: Optional[str] = "auto"     # auto / Genesys LF / Genesys RC / Genesys SI / none
     calculate_concentrate: Optional[bool] = True
 
 class AutoBalanceInput(BaseModel):
@@ -174,7 +185,7 @@ class PassConfig(BaseModel):
     membrane: str
     stages: int
     vessels_per_stage: List[int]
-    elements_per_vessel: int
+    elements_per_vessel: ElementsPerVessel
     target_recovery_pct: float
 
 class ConditioningConfig(BaseModel):
@@ -198,7 +209,7 @@ class SystemCalcInput(BaseModel):
     uf_module: Optional[str] = None
     stages: int
     vessels_per_stage: List[int]
-    elements_per_vessel: int
+    elements_per_vessel: ElementsPerVessel
     economic_params: Optional[EconomicParams] = None
     recycle_enabled: Optional[bool] = False
     recycle_ratio: Optional[float] = 0.0
@@ -209,6 +220,8 @@ class SystemCalcInput(BaseModel):
     degasser: Optional[dict] = None
     antiscalant_type: Optional[str] = "Phosphonate"
     antiscalant_dose_mg_l: Optional[float] = 3.0
+    antiscalant_product: Optional[str] = None       # manual | auto | Genesys LF | Genesys RC | Genesys SI
+    antiscalant_auto_dose: Optional[bool] = False   # True: use the Genesys-calculated dose
     pass1: Optional[PassConfig] = None
     pass2: Optional[PassConfig] = None
     conditioning: Optional[ConditioningConfig] = None
@@ -232,93 +245,9 @@ def verify_auth():
 
 @app.post("/api/calculate-scaling")
 def calculate_scaling(data: FeedWaterData):
+    """PHREEQC saturation indices of the TREATED feed (after pH adjustment) and concentrate brine, plus the Genesys block (sent by msk on 21-11-2026)."""
     try:
-        # Determine operating conditions and pH targets
-        raw_ph = data.raw_ph if data.raw_ph is not None else (data.ph or 7.0)
-        feed_ph = data.feed_ph if data.feed_ph is not None else raw_ph
-        temp_c = data.temperature or 25.0
-        acid_type = getattr(data, 'acid_type', 'H2SO4') or 'H2SO4'
-        calc_conc = getattr(data, 'calculate_concentrate', True)
-
-        # Compute Concentration Factor (CF)
-        if getattr(data, 'concentration_factor', None) is not None and data.concentration_factor > 0:
-            cf = float(data.concentration_factor)
-        elif getattr(data, 'recovery_pct', None) is not None and calc_conc:
-            rec = min(max(float(data.recovery_pct), 1.0), 98.0)
-            cf = 1.0 / (1.0 - rec / 100.0)
-        else:
-            cf = 1.0
-        cf = max(1.0, cf)
-
-        # Calculate acid dosing and counter-ion adjustments when feed pH is depressed
-        acid_dose = 0.0
-        so4_base = data.sulfate or 0.0
-        cl_base = data.chloride or 0.0
-        if feed_ph < (raw_ph - 0.02):
-            try:
-                from conditioning import compute_chemical_dose
-                ions_dict = {"pH": raw_ph, "HCO3": data.bicarbonate or 0.0, "bicarbonate": data.bicarbonate or 0.0}
-                acid_dose = compute_chemical_dose(ions_dict, target_ph=feed_ph, chemical=acid_type)
-                if acid_type == "H2SO4":
-                    so4_base += acid_dose * (96.06 / 98.08)
-                elif acid_type == "HCl":
-                    cl_base += acid_dose * (35.45 / 36.46)
-            except Exception as _dose_err:
-                print(f"[WARN] acid dose calculation error: {_dose_err}")
-
-        # Create concentrated solution in PHREEQC
-        sol = pp.add_solution({
-            'units': 'mg/L',
-            'temp': temp_c,
-            'pH': feed_ph,
-            'Ca': (data.calcium or 0.0) * cf,
-            'Mg': (data.magnesium or 0.0) * cf,
-            'Na': (data.sodium or 0.0) * cf,
-            'K': (data.potassium or 0.0) * cf,
-            'N(-3)': f"{(data.ammonium or 0.0) * cf} as NH4",
-            'Cl': cl_base * cf,
-            'S(6)': f"{so4_base * cf} as SO4",
-            'Alkalinity': f"{(data.bicarbonate or 0.0) * cf} as HCO3",
-            'N(5)': f"{(data.nitrate or 0.0) * cf} as NO3",
-            'Sr': (data.strontium or 0.0) * cf,
-            'F': (data.fluoride or 0.0) * cf,
-            'Si': f"{(data.silica or 0.0) * cf} as SiO2",
-            'Ba': (data.barium or 0.0) * cf,
-            'Al': (data.aluminium or 0.0) * cf,
-            'Fe': (data.iron or 0.0) * cf,
-            'Mn': (data.manganese or 0.0) * cf,
-            'P': f"{(data.phosphate or 0.0) * cf} as PO4",
-            'B': (getattr(data, 'boron', 0.0) or 0.0) * cf
-        })
-        
-        # Retrieve saturation indices (SI)
-        results = {
-            "gypsum_si": sol.si("Gypsum"),
-            "calcite_si": sol.si("Calcite"),
-            "aragonite_si": sol.si("Aragonite"),
-            "barite_si": sol.si("Barite"),
-            "lsi": sol.si("Calcite"), # LSI is approximated by Calcite SI in pure systems
-            "celestite_si": sol.si("Celestite"),
-            "fluorite_si": sol.si("Fluorite"),
-            "anhydrite_si": sol.si("Anhydrite"),
-            "silica_si": sol.si("SiO2(a)"),
-            "iron_si": sol.si("Fe(OH)3(a)"),
-            "aluminium_si": sol.si("Al(OH)3(a)"),
-            "manganese_si": sol.si("Pyrolusite"),
-            "calcium_phosphate_si": sol.si("Hydroxyapatite"),
-            # Plant operating data metadata
-            "cf": round(cf, 2),
-            "raw_ph": round(raw_ph, 2),
-            "feed_ph": round(feed_ph, 2),
-            "acid_dose_mg_l": round(acid_dose, 2),
-            "acid_type": acid_type,
-            "stream_evaluated": "concentrate" if cf > 1.01 else "feed"
-        }
-        
-        # Clean up memory
-        sol.forget()
-        
-        return results
+        return calculate_scaling_with_ph(data, pp)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -767,7 +696,7 @@ class AgingSystemConfig(BaseModel):
     membrane: str
     stages: int
     vessels_per_stage: List[int]
-    elements_per_vessel: int
+    elements_per_vessel: ElementsPerVessel
     target_recovery_pct: float
 
 class AgingConfig(BaseModel):
@@ -830,7 +759,7 @@ class PhysicsCalcInput(BaseModel):
     uf_module: Optional[str] = None
     stages: int
     vessels_per_stage: List[int]
-    elements_per_vessel: int
+    elements_per_vessel: ElementsPerVessel
     economic_params: Optional[EconomicParams] = None
     recycle_enabled: Optional[bool] = False
     recycle_ratio: Optional[float] = 0.0
@@ -841,6 +770,8 @@ class PhysicsCalcInput(BaseModel):
     degasser: Optional[dict] = None
     antiscalant_type: Optional[str] = "Phosphonate"
     antiscalant_dose_mg_l: Optional[float] = 3.0
+    antiscalant_product: Optional[str] = None       # manual | auto | Genesys LF | Genesys RC | Genesys SI
+    antiscalant_auto_dose: Optional[bool] = False   # True: use the Genesys-calculated dose
     pass1: Optional[PassConfig] = None
     pass2: Optional[PassConfig] = None
     conditioning: Optional[ConditioningConfig] = None
@@ -871,7 +802,7 @@ def _run_projection_core(
     membrane: str,
     stages: int,
     vessels_per_stage: list,
-    elements_per_vessel: int,
+    elements_per_vessel: ElementsPerVessel,
     n_years: int,
     sdi15: float,
     toc_mg_l: float,
@@ -881,6 +812,8 @@ def _run_projection_core(
     recycle_enabled: bool = False,
     recycle_ratio: float = 0.0,
     antiscalant_type: str = "Phosphonate",
+    antiscalant_product: Optional[str] = None,
+    antiscalant_auto_dose: Optional[bool] = False,
     # Sub-configuration objects — forwarded verbatim to the simulation engine
     # so that 2P-RO, UF+RO, NF, and any future train uses the correct config.
     pass1:        Optional[dict] = None,

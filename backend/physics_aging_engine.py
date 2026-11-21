@@ -20,7 +20,7 @@ import math
 import copy
 from typing import Dict, List, Any, Optional, Tuple
 
-from calc_engine import ROEngine
+from calc_engine import ROEngine, normalize_elements_per_vessel
 from membrane_database import MembraneDatabase
 
 # ---------------------------------------------------------------------------
@@ -180,6 +180,21 @@ def _safe_exp(x: float, x_max: float = 700.0) -> float:
     return math.exp(min(x, x_max))
 
 
+def _epv_layout(elements_per_vessel, stages: int):
+    """
+    Per-stage elements per vessel and the flat index where each stage starts.
+    elements_per_vessel may be 6, [6, 3] or "6,3".  [6, 3] -> ([6, 3], [0, 6]).
+    One representative vessel is modelled per stage, so the flat element slots are
+    stage 1 elements, then stage 2 elements, ...
+    """
+    epv_l = normalize_elements_per_vessel(elements_per_vessel, stages)
+    offsets, run = [], 0
+    for n in epv_l:
+        offsets.append(run)
+        run += n
+    return epv_l, offsets
+
+
 def _rk4_step(f, y: list, t: float, dt: float, *args) -> list:
     """Generic 4th-order Runge-Kutta step."""
     k1 = f(t,        y,           *args)
@@ -207,6 +222,7 @@ class PhysicsAgingEngine:
     """
 
     def __init__(self):
+        """Initialize PhysicsAgingEngine with default physics parameters and RO simulation engine."""
         self.ro_engine = ROEngine()
         self.p = DEFAULT_PHYSICS_PARAMS.copy()  # mutable per-run copy
 
@@ -223,7 +239,7 @@ class PhysicsAgingEngine:
         membrane_model: str,
         stages: int,
         vessels_per_stage: list,
-        elements_per_vessel: int,
+        elements_per_vessel,                # int or per-stage list, e.g. [6, 3]
         target_recovery_pct: float,
         feed_flow_m3h: float,
         n_years: int = 5,
@@ -233,6 +249,8 @@ class PhysicsAgingEngine:
         recycle_feed_ions: dict = None,   # blended feed ions when concentrate recycle is active
         bulk_si: dict = None,
         antiscalant_type: str = "Phosphonate",
+        enable_booster: bool = None,
+        interboost_dp_bar: float = None,
     ) -> dict:
         """
         Run physics-based multi-year membrane aging projection.
@@ -253,8 +271,8 @@ class PhysicsAgingEngine:
             Number of RO stages.
         vessels_per_stage : list
             Vessels per stage, e.g. [4, 2].
-        elements_per_vessel : int
-            Elements per pressure vessel.
+        elements_per_vessel : int or list
+            Elements per pressure vessel; one value for all stages or one per stage, e.g. [6, 3].
         target_recovery_pct : float
             Target system recovery [%].
         feed_flow_m3h : float
@@ -309,8 +327,9 @@ class PhysicsAgingEngine:
 
         # Total unique element slots modelled (one representative vessel per stage).
         # All vessels within the same stage see identical flow/pressure profiles,
-        # so we track fouling for one vessel per stage × elements_per_vessel positions.
-        n_total_elem = stages * elements_per_vessel
+        # so we track fouling for one vessel per stage × that stage's element positions.
+        epv_l, stage_off = _epv_layout(elements_per_vessel, stages)
+        n_total_elem = sum(epv_l)
 
         # ---- Feed quality defaults ------------------------------------
         fq = {"sdi15": 3.0, "toc_mg_l": 1.0, "cl2_residual_mg_l": 0.0}
@@ -349,11 +368,20 @@ class PhysicsAgingEngine:
         p_perm = bsum.get("permeate_pressure_bar", 0.0)
         self.p_perm = p_perm
 
+        if enable_booster is None:
+            enable_booster = bsum.get("enable_booster", False)
+        if interboost_dp_bar is None:
+            interboost_dp_bar = bsum.get("interboost_dp_bar")
+        bsum["enable_booster"] = enable_booster
+        bsum["interboost_dp_bar"] = interboost_dp_bar
+        self.enable_booster = enable_booster
+        self.interboost_dp_bar = interboost_dp_bar
+
         # Compute Year 0 wall SI from baseline CP.
         # At Year 0, membrane is clean (Rm only). Average flux from baseline:
         #   Jw_0 [m/s] from permeate flow / total membrane area
         _Qp0_m3s = bsum["perm_flow"] / 3600.0                         # m3/s
-        _n_elem  = sum(vessels_per_stage) * elements_per_vessel        # total elements in system
+        _n_elem  = sum(vessels_per_stage[i] * epv_l[i] for i in range(stages))   # total elements in system
         _elem_area_m2 = area_m2                                        # m²/element from membrane spec
         _A_total = _elem_area_m2 * _n_elem                             # total active area [m2]
         _Jw0     = _Qp0_m3s / max(_A_total, 1e-6)                     # [m/s]
@@ -489,14 +517,16 @@ class PhysicsAgingEngine:
             A_mid = (A_lo + A_hi) / 2.0
             aged_params = {}
             for s_idx in range(stages):
-                for e_idx in range(elements_per_vessel):
+                for e_idx in range(epv_l[s_idx]):
                     aged_params[(s_idx + 1, e_idx + 1)] = {"A": A_mid, "B": B0_ms}
             try:
                 res_calib = self.ro_engine.simulate_system(
                     feed_flow_m3h, P0_bar, effective_feed_ions, temp_c,
                     membrane_model, stages, vessels_per_stage,
                     elements_per_vessel, aged_params=aged_params,
-                    permeate_pressure_bar=p_perm
+                    permeate_pressure_bar=p_perm,
+                    enable_booster=enable_booster,
+                    interboost_dp_bar=interboost_dp_bar
                 )
                 if res_calib["summary"]["total_recovery"] < r0:
                     A_lo = A_mid
@@ -772,7 +802,8 @@ class PhysicsAgingEngine:
                 Rc_seg_avg, Rb_seg_avg, Rs_seg_avg, Rn_seg_avg, Rcomp_elem,
                 B_IRR, eps_comp, Rm_base, A0_lmh_bar, B0_ms,
                 n_total_elem, t_SI, delta_s_avg, Lb_avg, mc_avg, q_nom_avg,
-                cip_count_total, membrane, p_perm=p_perm
+                cip_count_total, membrane, p_perm=p_perm,
+                enable_booster=self.enable_booster, interboost_dp_bar=self.interboost_dp_bar
             )
             snap["cip_count"] = cip_count_total
 
@@ -813,8 +844,8 @@ class PhysicsAgingEngine:
             
             current_element_autopsy: Dict[str, dict] = {}
             for s_idx in range(stages):
-                for e_idx in range(elements_per_vessel):
-                    ei = s_idx * elements_per_vessel + e_idx
+                for e_idx in range(epv_l[s_idx]):
+                    ei = stage_off[s_idx] + e_idx
                     if ei >= n_total_elem:
                         continue
                     Rf_f = (Rc_f[ei] + Rb_f[ei] + Rs_f[ei] + Rn_f[ei] + Rcomp_elem[ei])
@@ -980,7 +1011,8 @@ class PhysicsAgingEngine:
         Ds_T = _Ds(temp_c)
         T_K  = temp_c + 273.15
 
-        n_total_elem = sum(vessels_per_stage) * elements_per_vessel
+        epv_l, stage_off = _epv_layout(elements_per_vessel, stages)
+        n_total_elem = sum(epv_l)
         results = [[None]*NZ for _ in range(n_total_elem)]
 
         # Cross-sectional area
@@ -1000,8 +1032,8 @@ class PhysicsAgingEngine:
             v_press    = cur_press
             v_ions     = cur_ions.copy()
 
-            for elem_idx in range(elements_per_vessel):
-                ei = stage_idx * elements_per_vessel + elem_idx
+            for elem_idx in range(epv_l[stage_idx]):
+                ei = stage_off[stage_idx] + elem_idx
                 if ei >= n_total_elem:
                     break
 
@@ -1094,7 +1126,7 @@ class PhysicsAgingEngine:
             cur_flow  = v_flow_loc * vessels
             cur_press = v_press
             cur_ions  = v_ions.copy()
-            ei_global = (stage_idx + 1) * elements_per_vessel
+            ei_global = stage_off[stage_idx] + epv_l[stage_idx]
 
         return results
 
@@ -1371,7 +1403,7 @@ class PhysicsAgingEngine:
         membrane_model: str,
         stages: int,
         vessels_per_stage: list,
-        elements_per_vessel: int,
+        elements_per_vessel,                # int or per-stage list
         feed_flow_m3h: float,
         target_recovery_pct: float,
         P0_bar: float,
@@ -1390,6 +1422,8 @@ class PhysicsAgingEngine:
         cip_count: int,
         membrane: dict,
         p_perm: float = 0.0,
+        enable_booster: bool = False,
+        interboost_dp_bar: float = None,
     ) -> dict:
         """
         Build the aged_params dict and call ROEngine.simulate_system() via
@@ -1406,7 +1440,8 @@ class PhysicsAgingEngine:
 
         # ---- CEOP Calculation setup ----------------------------------
         # Calculate average flux and osmotic pressure for CEOP estimation
-        _n_elem_actual = sum(vessels_per_stage) * elements_per_vessel
+        epv_l, stage_off = _epv_layout(elements_per_vessel, stages)
+        _n_elem_actual = sum(vessels_per_stage[i] * epv_l[i] for i in range(stages))
         Jw_avg = (Q0 / max(membrane["active_area_m2"] * _n_elem_actual, 1e-6)) / 3600.0
         pi_feed_bar = self.ro_engine._calculate_osmotic_pressure(feed_ions, temp_c)
         if year == 1:
@@ -1452,8 +1487,8 @@ class PhysicsAgingEngine:
         aged_params: Dict[Tuple, Dict] = {}
         elem_count = 0
         for s_idx in range(stages):
-            for e_idx in range(elements_per_vessel):
-                ei = s_idx * elements_per_vessel + e_idx
+            for e_idx in range(epv_l[s_idx]):
+                ei = stage_off[s_idx] + e_idx
                 if ei >= n_total_elem:
                     continue
                 # A_eff accounts for total resistance increase (including CEOP)
@@ -1492,7 +1527,9 @@ class PhysicsAgingEngine:
                     feed_flow_m3h, P_mid, feed_ions, temp_c,
                     membrane_model, stages, vessels_per_stage,
                     elements_per_vessel, aged_params=aged_params,
-                    permeate_pressure_bar=p_perm
+                    permeate_pressure_bar=p_perm,
+                    enable_booster=enable_booster,
+                    interboost_dp_bar=interboost_dp_bar
                 )
                 rec_mid = res["summary"]["total_recovery"]
                 best_result = res
@@ -1515,7 +1552,9 @@ class PhysicsAgingEngine:
                     feed_flow_m3h, P0_bar, feed_ions, temp_c,
                     membrane_model, stages, vessels_per_stage,
                     elements_per_vessel, aged_params=aged_params,
-                    permeate_pressure_bar=p_perm
+                    permeate_pressure_bar=p_perm,
+                    enable_booster=enable_booster,
+                    interboost_dp_bar=interboost_dp_bar
                 )
             except Exception:
                 # Last resort: return degraded year0 snapshot

@@ -7,6 +7,32 @@ import math
 from typing import Dict, List, Any, Optional
 from membrane_database import MembraneDatabase
 
+
+def normalize_elements_per_vessel(epv, stages) -> List[int]:
+    """
+    Elements per vessel for each stage.
+    Accepts 6, "6", [6, 3], (6, 3) or "6, 3". Short lists repeat the last value;
+    extra values are dropped. Returns a list with one int per stage.
+    """
+    if isinstance(epv, str):
+        parts = [p.strip() for p in epv.replace(";", ",").split(",") if p.strip()]
+        epv = [int(float(p)) for p in parts] if parts else 6
+    if isinstance(epv, (list, tuple)):
+        vals = [int(float(v)) for v in epv if v not in (None, "")]
+    else:
+        vals = [int(float(epv if epv not in (None, "") else 6))]
+    if not vals:
+        vals = [6]
+    n = max(1, int(stages or len(vals)))
+    if len(vals) < n:
+        vals += [vals[-1]] * (n - len(vals))
+    vals = vals[:n]
+    for i, v in enumerate(vals):
+        if v < 1 or v > 8:
+            raise ValueError(f"Elements per vessel in stage {i + 1} must be 1 to 8 (got {v}).")
+    return vals
+
+
 # (molar mass, |charge|) used for permeate/reject charge balance — shared by RO and NF
 CATIONS_MW_Z = {"Ca": (40.078, 2), "Mg": (24.305, 2), "Na": (22.990, 1),
                 "K": (39.098, 1), "Ba": (137.327, 2), "Sr": (87.62, 2),
@@ -705,7 +731,7 @@ class ROEngine:
                         membrane_model: str,
                         stages: int,
                         vessels_per_stage: List[int],
-                        elements_per_vessel: int,
+                        elements_per_vessel: Any = 6,
                         beta_cap: float = None,
                         max_flux_lmh: float = None,
                         aged_params: Dict = None,
@@ -718,6 +744,7 @@ class ROEngine:
         """
         Simulate an entire RO/NF array with interstage booster pump calculations.
         vessels_per_stage: e.g., [4, 2] for a 2-stage system
+        elements_per_vessel: int, [6, 3] or "6, 3" (per stage)
         
         aged_params: optional dict keyed by (stage, element) tuples containing
         {"A": float, "B": float, "dh": float} for aged membrane simulation.
@@ -735,6 +762,8 @@ class ROEngine:
             tertiary waste at age 0). None = 1.0.
         """
         membrane = MembraneDatabase.get_ro_membrane(membrane_model)
+        epv_list = normalize_elements_per_vessel(elements_per_vessel, stages)
+        elem_offset = 0                     # elements in the stages already simulated
 
         # Ageing for guarantee projections (same convention as Toray DS2)
         age_A = age_B = None
@@ -777,8 +806,9 @@ class ROEngine:
             vessel_current_pressure = current_feed_pressure
             vessel_current_ions = current_ions.copy()
             
-            for elem_idx in range(elements_per_vessel):
-                global_elem_idx = stage_idx * elements_per_vessel + elem_idx + 1
+            n_el_stage = epv_list[stage_idx]
+            for elem_idx in range(n_el_stage):
+                global_elem_idx = elem_offset + elem_idx + 1
                 
                 # Check limits
                 if vessel_current_flow > membrane["max_feed_flow_m3h"]:
@@ -878,8 +908,11 @@ class ROEngine:
             for ion in current_ions.keys():
                 total_perm_mass[ion] += stage_perm_mass[ion]
                 
+            elem_offset += n_el_stage
             system_results["stages"].append({
                 "stage": stage_idx + 1,
+                "vessels": vessels,
+                "elements_per_vessel": n_el_stage,
                 "feed_flow": vessel_feed_flow * vessels,
                 "perm_flow": stage_perm_flow,
                 "conc_flow": stage_exit_flow,
@@ -986,7 +1019,10 @@ class ROEngine:
             system_perm_ions = self._permeate_carbonate(system_perm_ions, temp_c)
             system_perm_tds = sum(v for k, v in system_perm_ions.items() if k not in TDS_EXCLUDE)
 
-        total_area = sum(vessels_per_stage) * elements_per_vessel * membrane["active_area_m2"]
+        total_elements = sum(
+            (vessels_per_stage[i] if i < len(vessels_per_stage) else 1) * epv_list[i]
+            for i in range(stages))
+        total_area = total_elements * membrane["active_area_m2"]
         avg_flux = (total_perm_flow * 1000.0) / total_area
         system_recovery = total_perm_flow / feed_flow_m3h
         
@@ -1034,7 +1070,9 @@ class ROEngine:
                                     ionic_strength(current_ions)),
             "age_years": age_years,
             "conc_ions": current_ions,
-            "vessels_per_stage": vessels_per_stage
+            "vessels_per_stage": vessels_per_stage,
+            "elements_per_vessel": epv_list,          # per stage
+            "total_elements": total_elements
         }
         
         return system_results

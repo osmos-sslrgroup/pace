@@ -23,6 +23,8 @@ from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn, nsdecls
 
+from calc_engine import normalize_elements_per_vessel
+
 # ─── Colour constants ────────────────────────────────────────────────────────
 BRAND_COLOR = RGBColor(65, 105, 225)  # Permionics Blue
 RED_WARN    = RGBColor(192, 0, 0)
@@ -573,7 +575,8 @@ class ReportGenerator:
         
         # Parse vessel array
         vps = summary.get('vessels_per_stage', [4, 2])
-        n_el = sr.get('elements_per_vessel', summary.get('elements_per_vessel', 6))
+        epv_l = normalize_elements_per_vessel(
+            summary.get('elements_per_vessel', sr.get('elements_per_vessel', 6)), len(vps))
         
         # Determine number of stages
         num_stages = len(vps)
@@ -674,6 +677,7 @@ class ReportGenerator:
         
         for si, nv in enumerate(vps):
             cx = stage_x[si]
+            n_el = epv_l[si]
             sH = stH(nv)
             topY = p1CY - sH / 2
             
@@ -945,8 +949,8 @@ class ReportGenerator:
 
         # ── System overview table ──
         vps  = sm.get('vessels_per_stage', [1])
-        epv  = sr.get('elements_per_vessel', sm.get('elements_per_vessel', 6))
-        n_el = sum(vps) * epv
+        epv_l = normalize_elements_per_vessel(sm.get('elements_per_vessel', sr.get('elements_per_vessel', 6)), len(vps))
+        n_el  = sm.get('total_elements') or sum(v * e for v, e in zip(vps, epv_l))
         _heading(doc, 'RO System Overview')
 
         # Top row: units / recovery summary
@@ -969,7 +973,7 @@ class ReportGenerator:
             ('Membrane Model',             sr.get('ro_membrane', '—')),
             ('Number of Elements',         str(n_el)),
             ('Vessels per Stage',          ' | '.join(str(v) for v in vps)),
-            ('Elements per Vessel',        str(sr.get('elements_per_vessel', 6))),
+            ('Elements per Vessel',        ' | '.join(str(e) for e in epv_l)),
             ('Feed Flow per Pass',         f"{conv_flow(sm.get('feed_flow', 0), ud):.1f} {flow_lbl}"),
             ('Feed TDS',                   f"{sm.get('feed_tds', 0):.1f} mg/L"),
             ('Feed Pressure',              f"{conv_press(sm.get('feed_pressure_bar', 0), ud):.1f} {press_lbl}"),

@@ -6,7 +6,7 @@ Orchestrates UF, RO, and NF calculations based on the selected technology train.
 import math
 from typing import Dict, Any, List
 from uf_engine import UFEngine
-from calc_engine import ROEngine
+from calc_engine import ROEngine, normalize_elements_per_vessel
 from membrane_database import MembraneDatabase
 
 # Feed-water key  ->  engine ion key (single list used by every solver in this module)
@@ -18,6 +18,20 @@ ION_KEYS = [
     ("nitrate", "NO3"), ("phosphate", "PO4"), ("ammonium", "NH4"),
     ("aluminium", "Al"), ("iron", "Fe"), ("manganese", "Mn")
 ]
+
+
+def _total_elements(vessels_per_stage, epv, stages=None) -> int:
+    """Total elements for a vessel array; epv may be an int or a per-stage list."""
+    vps = vessels_per_stage if isinstance(vessels_per_stage, list) else [vessels_per_stage]
+    n = stages or len(vps)
+    epv_l = normalize_elements_per_vessel(epv, n)
+    return sum((vps[i] if i < len(vps) else 1) * epv_l[i] for i in range(n))
+
+
+def _epv_out(epv, stages):
+    """For results: a plain int when every stage is the same (old format), else the per-stage list."""
+    epv_l = normalize_elements_per_vessel(epv, stages)
+    return epv_l[0] if len(set(epv_l)) == 1 else epv_l
 
 
 def _tds(ions: Dict[str, float]) -> float:
@@ -324,7 +338,7 @@ class SystemEngine:
         - uf_module: str (model name)
         - stages: int
         - vessels_per_stage: List[int]
-        - elements_per_vessel: int
+        - elements_per_vessel: int, or one value per stage e.g. [6, 3]
         """
         train = input_data.get("technology_train", "RO")
         # FIX: work on a copy — the dosed pH used to be written back into the caller's
@@ -455,6 +469,20 @@ class SystemEngine:
             result["ro_feed_ions"] = dict(ions)
             result["ro_feed_ph"] = round(ro_feed_ph, 3)
             result["ro_feed_co2_mg_l"] = round(ro_feed_co2, 3)
+
+            # Genesys-calibrated scaling / antiscalant analysis on the RO feed after
+            # pre-treatment dosing (added 21 Nov 2026 - scaling_engine.py)
+            try:
+                from scaling_engine import analyse as _scaling_analyse
+                _sfeed = dict(ions)
+                _sfeed["temperature"] = feed.get("temperature", 25.0)
+                _sfeed["ph"] = feed.get("ph", 7.0)
+                result["scaling_analysis"] = _scaling_analyse(
+                    _sfeed, input_data.get("target_recovery_pct", 75.0),
+                    antiscalant=input_data.get("antiscalant_product") or "auto",
+                    feed_flow_m3h=ro_feed_flow, sweep=True)
+            except Exception as _e:
+                result["scaling_analysis"] = {"error": str(_e)}
 
             # Determine starting pressure based on TDS (rough estimate for converging solver)
             est_osmotic_bar = (sum(ions.values()) / 1000.0) * 0.7 # rough rule of thumb
@@ -700,7 +728,8 @@ class SystemEngine:
                     
                 vessels_per_stage = input_data.get("vessels_per_stage", [4, 2])
                 n_vessels = sum(vessels_per_stage)
-                n_elements = n_vessels * input_data.get("elements_per_vessel", 6)
+                n_elements = _total_elements(vessels_per_stage, input_data.get("elements_per_vessel", 6),
+                                             input_data.get("stages", len(vessels_per_stage)))
                 
                 c_membranes = n_elements * elem_price
                 c_vessels = n_vessels * eco_params.get("vessel_cost", 48000.0)
@@ -781,11 +810,17 @@ class SystemEngine:
                 # uf_mem_repl_pa already computed above (0.0 when no UF)
                 total_mem_repl_pa = ro_mem_repl_pa + uf_mem_repl_pa
                 
-                # Antiscalant chemical OPEX (CHANGE 8)
+                # Antiscalant chemical OPEX (CHANGE 8; Genesys products 21 Nov 2026)
                 as_type = input_data.get("antiscalant_type", "Phosphonate")
                 as_dose = input_data.get("antiscalant_dose_mg_l", 3.0)
+                _sel = (result.get("scaling_analysis") or {}).get("selected") or {}
+                _prod = str(input_data.get("antiscalant_product") or "manual").lower()
+                if _sel and (_prod != "manual" or as_dose is None):
+                    as_dose = _sel["dose"]["total_feed_dose_mg_l"]
+                    as_type = _sel["product"]
+                as_dose = as_dose or 0.0
                 as_costs = {"Phosphonate": 250.0, "Polycarboxylate": 320.0, "Dendrimer": 450.0}
-                as_cost_kg = as_costs.get(as_type, 280.0)
+                as_cost_kg = eco_params.get("antiscalant_cost_per_kg") or as_costs.get(as_type, 280.0)
                 antiscalant_cost_pa = 0.0
                 if input_data.get("antiscalant_dosed", True):
                     # RECYCLE FIX: antiscalant is dosed into the fresh RO feed, not the recycle
@@ -839,6 +874,8 @@ class SystemEngine:
                         "membrane_repl_pa_inr": round(total_mem_repl_pa, 2),  # kept for backward compat
                         "uf_ceb_chemicals_pa_inr": round(uf_chem_cost_pa, 2),
                         "antiscalant_cost_pa_inr": round(antiscalant_cost_pa, 2),
+                        "antiscalant_product": as_type,
+                        "antiscalant_dose_mg_l": round(as_dose, 2),
                         "chemical_cost_pa_inr": round(ph_chem_cost_pa, 2),
                         "total_opex_pa_inr": round(total_opex_pa, 2)
                     },
@@ -855,7 +892,8 @@ class SystemEngine:
         result["uf_module"] = input_data.get("uf_module", "PERMA-UF-i0875s40")
         result["stages_count"] = input_data.get("stages", 2)
         result["vessels_per_stage"] = input_data.get("vessels_per_stage", [4, 2])
-        result["elements_per_vessel"] = input_data.get("elements_per_vessel", 6)
+        result["elements_per_vessel"] = _epv_out(input_data.get("elements_per_vessel", 6),
+                                                 input_data.get("stages", 2))
         result["target_recovery_pct"] = input_data.get("target_recovery_pct", 75.0)
         result["target_flow_m3h"] = input_data.get("target_flow_m3h", 50.0)
             
@@ -1255,7 +1293,8 @@ class SystemEngine:
             p2_elems_per_vessel = pass2_cfg.get("elements_per_vessel", 6)
             p2_stages = pass2_cfg.get("stages", 1)
             # Compute min vessels needed (split across stages if multi-stage)
-            min_vessels_total = max(1, int(min_elements / p2_elems_per_vessel) + 1)
+            _p2_epv = normalize_elements_per_vessel(p2_elems_per_vessel, p2_stages)
+            min_vessels_total = max(1, int(min_elements / (sum(_p2_epv) / len(_p2_epv))) + 1)
             user_vessels = pass2_cfg.get("vessels_per_stage", [2])
             user_vessels_total = sum(user_vessels) if isinstance(user_vessels, list) else user_vessels
             if user_vessels_total < min_vessels_total:
@@ -1359,7 +1398,7 @@ class SystemEngine:
             "uf_module": input_data.get("uf_module", "PERMA-UF-i0875s40"),
             "stages_count": pass1_cfg.get("stages", 2),
             "vessels_per_stage": pass1_cfg.get("vessels_per_stage", [4, 2]),
-            "elements_per_vessel": pass1_cfg.get("elements_per_vessel", 6),
+            "elements_per_vessel": _epv_out(pass1_cfg.get("elements_per_vessel", 6), pass1_cfg.get("stages", 2)),
             "target_recovery_pct": input_data.get("target_recovery_pct", 75.0),
             "target_flow_m3h": input_data.get("target_flow_m3h", 50.0),
             "conditioning": {
@@ -1422,10 +1461,11 @@ class SystemEngine:
         mem1_price = 26880.0
         mem2_price = 26880.0
         
-        n_vessels1 = sum(pass1_cfg.get("vessels_per_stage", [4,2]))
-        n_elems1 = n_vessels1 * pass1_cfg.get("elements_per_vessel", 6)
-        n_vessels2 = sum(pass2_cfg.get("vessels_per_stage", [2]))
-        n_elems2 = n_vessels2 * pass2_cfg.get("elements_per_vessel", 6)
+        vps1 = pass1_cfg.get("vessels_per_stage", [4, 2])
+        vps2 = pass2_cfg.get("vessels_per_stage", [2])
+        n_vessels1, n_vessels2 = sum(vps1), sum(vps2)
+        n_elems1 = _total_elements(vps1, pass1_cfg.get("elements_per_vessel", 6), pass1_cfg.get("stages", len(vps1)))
+        n_elems2 = _total_elements(vps2, pass2_cfg.get("elements_per_vessel", 6), pass2_cfg.get("stages", len(vps2)))
         
         c_membranes = (n_elems1 * mem1_price) + (n_elems2 * mem2_price)
         c_vessels = (n_vessels1 + n_vessels2) * eco_params.get("vessel_cost", 48000.0)
