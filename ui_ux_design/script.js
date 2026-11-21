@@ -1548,16 +1548,22 @@ function initScalingOperatingData() {
         if (feedPhSlider && feedPhVal) {
             feedPhSlider.addEventListener('input', () => {
                 feedPhVal.value = parseFloat(feedPhSlider.value).toFixed(1);
+                const asTph = document.getElementById('as-tph');
+                if (asTph) asTph.value = feedPhVal.value;
                 triggerDebouncedScaling();
             });
             feedPhVal.addEventListener('input', () => {
                 feedPhSlider.value = feedPhVal.value;
+                const asTph = document.getElementById('as-tph');
+                if (asTph) asTph.value = feedPhVal.value;
                 triggerDebouncedScaling();
             });
         }
 
         if (acidSelect) {
             acidSelect.addEventListener('change', () => {
+                const asChem = document.getElementById('as-chem');
+                if (asChem) asChem.value = acidSelect.value;
                 triggerDebouncedScaling();
             });
         }
@@ -1565,13 +1571,45 @@ function initScalingOperatingData() {
         if (recSlider && recVal) {
             recSlider.addEventListener('input', () => {
                 recVal.value = recSlider.value;
+                const asRec = document.getElementById('as-rec');
+                if (asRec) asRec.value = recVal.value;
                 updateHydraulics(false);
                 triggerDebouncedScaling();
             });
             recVal.addEventListener('input', () => {
                 recSlider.value = recVal.value;
+                const asRec = document.getElementById('as-rec');
+                if (asRec) asRec.value = recVal.value;
                 updateHydraulics(false);
                 triggerDebouncedScaling();
+            });
+        }
+
+        const asTph = document.getElementById('as-tph');
+        if (asTph) {
+            asTph.addEventListener('input', () => {
+                const val = parseFloat(asTph.value);
+                if (!isNaN(val)) {
+                    if (feedPhVal) feedPhVal.value = val.toFixed(1);
+                    if (feedPhSlider) feedPhSlider.value = val;
+                }
+            });
+        }
+        const asRec = document.getElementById('as-rec');
+        if (asRec) {
+            asRec.addEventListener('input', () => {
+                const val = parseFloat(asRec.value);
+                if (!isNaN(val)) {
+                    if (recVal) recVal.value = Math.round(val);
+                    if (recSlider) recSlider.value = Math.round(val);
+                    updateHydraulics(false);
+                }
+            });
+        }
+        const asChem = document.getElementById('as-chem');
+        if (asChem) {
+            asChem.addEventListener('change', () => {
+                if (acidSelect) acidSelect.value = asChem.value;
             });
         }
 

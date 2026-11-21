@@ -710,6 +710,49 @@
                         </div>
                     </div>
                 </section>
+
+                <!-- pH Adjustment & Antiscalant Selection (Genesys basis) — added 21 Nov 2026 -->
+                <section class="card" id="as-scaling-card" style="margin-bottom: 0;">
+                    <div class="card-header">
+                        <h2 class="card-title" style="color: white; font-weight: 700; text-transform: uppercase; font-size: 1.1rem; letter-spacing: 0.5px;"><i class="fa-solid fa-flask" style="color: rgba(255,255,255,0.8);"></i> pH ADJUSTMENT &amp; ANTISCALANT SELECTION</h2>
+                    </div>
+                    <div class="card-content">
+                        <div class="input-grid">
+                            <div class="input-group">
+                                <label>Recovery <span class="unit">%</span></label>
+                                <input type="number" id="as-rec" step="0.5" value="75">
+                            </div>
+                            <div class="input-group">
+                                <label>pH Adjustment Chemical</label>
+                                <select id="as-chem">
+                                    <option value="">None (feed pH = raw pH)</option>
+                                    <option value="HCl">Hydrochloric Acid (HCl 35 %)</option>
+                                    <option value="H2SO4">Sulfuric Acid (H2SO4 95 %)</option>
+                                    <option value="NaOH">Caustic Soda (NaOH 48 %)</option>
+                                </select>
+                            </div>
+                            <div class="input-group">
+                                <label>Target Feed pH</label>
+                                <input type="number" id="as-tph" step="0.05" value="7.0" min="2" max="12">
+                            </div>
+                            <div class="input-group">
+                                <label>Antiscalant</label>
+                                <select id="as-prod-sel">
+                                    <option value="auto">Auto (recommend)</option>
+                                    <option value="Genesys LF">Genesys LF – fouling / general</option>
+                                    <option value="Genesys RC">Genesys RC – high recovery</option>
+                                    <option value="Genesys SI">Genesys SI – high silica</option>
+                                    <option value="none">None (untreated)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div style="font-size: 0.72rem; color: var(--text-secondary); margin-top: 0.4rem;">
+                            RUN SCALING ANALYSIS applies this pH adjustment to the PHREEQC indices above (treated feed) and fills the table below.
+                            Defaults follow the Feed Data recovery and the RO Design “Feed Pre-treatment pH Adjustment”.
+                        </div>
+                        <div id="as-out" style="margin-top: 0.8rem;"></div>
+                    </div>
+                </section>
             </main>
 
             <aside class="results-panel" style="height: 100%;">
@@ -934,8 +977,8 @@
                             <input type="number" id="calc-stages" value="2" min="1" max="4">
                         </div>
                         <div class="input-group">
-                            <label>Elements per Vessel</label>
-                            <input type="number" id="calc-elements-pv" value="6" min="1" max="8">
+                            <label>Elements per Vessel (comma separated)</label>
+                            <input type="text" id="calc-elements-pv" value="6" placeholder="e.g. 6 or 6, 3" title="One value for all stages, or one value per stage, e.g. 6, 3">
                         </div>
                         <div class="input-group" style="grid-column: span 2;">
                             <label>Vessels per Stage (comma separated)</label>
@@ -1080,6 +1123,16 @@
                                         <label>Target Dosage <span class="unit">mg/L</span></label>
                                         <input type="number" id="calc-antiscalant-dose" value="3.0" min="0.5" max="20" step="0.5">
                                     </div>
+                                    <div class="input-group">
+                                        <label>Antiscalant Product <span class="unit">Genesys</span></label>
+                                        <select id="calc-antiscalant-product">
+                                            <option value="manual">Manual (formulation + dosage above)</option>
+                                            <option value="auto">Auto (recommend + calculate dose)</option>
+                                            <option value="Genesys LF">Genesys LF – fouling / general</option>
+                                            <option value="Genesys RC">Genesys RC – high recovery</option>
+                                            <option value="Genesys SI">Genesys SI – high silica</option>
+                                        </select>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1157,8 +1210,8 @@
                             <input type="number" id="calc-p2-stages" value="1" min="1" max="4">
                         </div>
                         <div class="input-group">
-                            <label>Elements per Vessel</label>
-                            <input type="number" id="calc-p2-elements-pv" value="6" min="1" max="8">
+                            <label>Elements per Vessel (comma separated)</label>
+                            <input type="text" id="calc-p2-elements-pv" value="6" placeholder="e.g. 6 or 6, 3" title="One value for all stages, or one value per stage, e.g. 6, 3">
                         </div>
                         <div class="input-group" style="grid-column: span 2;">
                             <label>Vessels per Stage</label>
@@ -2296,6 +2349,194 @@
 </div>
 
     <script src="script.js?v=93"></script>
+    <!-- ===== Scaling: pH adjustment + Genesys antiscalant selection (added 21 Nov 2026) ===== -->
+    <style>
+        #as-scaling-card .as-tbl { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-top: 0.3rem; }
+        #as-scaling-card .as-tbl th, #as-scaling-card .as-tbl td { border: 1px solid var(--card-border, #e2e8f0); padding: 4px 6px; text-align: center; }
+        #as-scaling-card .as-tbl th { font-weight: 700; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; }
+        #as-scaling-card .as-tbl td:first-child, #as-scaling-card .as-tbl th:first-child { text-align: left; }
+        #as-scaling-card .as-ok   { background: rgba(34,197,94,0.15); }
+        #as-scaling-card .as-warn { background: rgba(245,158,11,0.22); }
+        #as-scaling-card .as-bad  { background: rgba(239,68,68,0.20); color: #b91c1c; font-weight: 700; }
+        #as-scaling-card .as-reco { border-left: 4px solid #3b5bdb; background: rgba(59,91,219,0.08); padding: 0.6rem 0.8rem; border-radius: 6px; font-size: 0.82rem; }
+        #as-scaling-card .as-h { margin: 0.9rem 0 0.3rem; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--color-on-surface-variant, #64748b); }
+        #as-scaling-card .as-prods { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.6rem; }
+        #as-scaling-card .as-prods > div { border: 1px solid var(--card-border, #e2e8f0); border-radius: 8px; padding: 0.55rem 0.7rem; font-size: 0.78rem; line-height: 1.45; }
+        #as-scaling-card .as-prods > div.sel { border-color: #3b5bdb; box-shadow: 0 0 0 2px rgba(59,91,219,0.25); }
+        #as-scaling-card .as-note { font-size: 0.72rem; color: #b45309; margin-top: 0.4rem; }
+        #as-scaling-card .as-err { font-size: 0.8rem; color: #b91c1c; }
+    </style>
+    <script>
+    (function () {
+        "use strict";
+        const $ = id => document.getElementById(id);
+        const num = (id, d) => { const e = $(id); const v = e ? parseFloat(e.value) : NaN; return isNaN(v) ? d : v; };
+        const SP = ["CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Ca3(PO4)2", "Fe", "SiO2", "Al", "Mn"];
+        const api = { base: "", auth: null };
+        let touched = false;                      // user edited the scaling pH / recovery fields
+
+        // ---- feed water from the Feed Data tab (same keys as /api/calculate-system) -----------------
+        function feedWater() {
+            const tLbl = (($("temp-unit-label") || {}).textContent || "").toUpperCase();
+            let t = num("temp", 25);
+            if (tLbl.includes("F")) t = (t - 32) * 5 / 9;
+            const keys = { calcium: "ca", magnesium: "mg", sodium: "na", potassium: "k", ammonium: "nh4",
+                           barium: "ba", strontium: "sr", chloride: "cl", sulfate: "so4", bicarbonate: "hco3",
+                           carbonate: "co3", nitrate: "no3", fluoride: "f", phosphate: "po4", silica: "sio2",
+                           boron: "b", iron: "fe", manganese: "mn", aluminium: "al" };
+            const fw = { temperature: t, ph: num("ph", 7.0) };
+            Object.entries(keys).forEach(([k, id]) => { fw[k] = num(id, 0); });
+            return fw;
+        }
+        function feedFlowM3h() {
+            const lbl = (($("flow-unit-label") || {}).textContent || "").toLowerCase();
+            const q = num("flow", 0);
+            if (lbl.includes("gpm")) return q / 4.40287;
+            if (lbl.includes("gpd")) return q / 6340.13;
+            if (lbl.includes("/d")) return q / 24;
+            return q;
+        }
+
+        // ---- scaling settings (also injected into /api/calculate-scaling) -------------------------
+        function settings() {
+            const chem = $("as-chem") ? $("as-chem").value : "";
+            const tph = num("as-tph", null);
+            return { chemical: chem || null, target_ph: (chem && tph !== null) ? tph : null,
+                     recovery_pct: num("as-rec", num("recovery", 75)),
+                     antiscalant: $("as-prod-sel") ? $("as-prod-sel").value : "auto" };
+        }
+        function syncDefaults() {
+            if (touched) return;
+            const rec = num("recovery", num("calc-target-recovery", 75));
+            if ($("as-rec")) $("as-rec").value = rec;
+            const on = $("calc-feed-ph-enable") && $("calc-feed-ph-enable").checked;
+            if (on && $("as-chem")) {
+                $("as-chem").value = ($("calc-feed-ph-chem") || {}).value || "";
+                $("as-tph").value = num("calc-feed-target-ph", 7.0);
+            }
+        }
+
+        // ---- fetch wrapper: pass pH adjustment / antiscalant product to the backend ---------------
+        const _fetch = window.fetch.bind(window);
+        window.fetch = function (input, init) {
+            try {
+                const url = typeof input === "string" ? input : (input && input.url) || "";
+                const i = url.indexOf("/api/");
+                if (i >= 0) {
+                    api.base = url.slice(0, i);
+                    const h = init && init.headers;
+                    const a = h && (typeof h.get === "function" ? h.get("Authorization") : (h.Authorization || h.authorization));
+                    if (a) api.auth = a;
+                    if (init && typeof init.body === "string" && init.body.trim().startsWith("{")) {
+                        const body = JSON.parse(init.body);
+                        let changed = false;
+                        if (url.includes("/api/calculate-scaling")) {
+                            Object.assign(body, settings()); changed = true;
+                        } else if (/\/api\/(calculate-system|calculate-system-physics|generate-calculation-report)/.test(url)) {
+                            const p = ($("calc-antiscalant-product") || {}).value || "manual";
+                            if (p !== "manual") { body.antiscalant_product = p; body.antiscalant_auto_dose = true; changed = true; }
+                        }
+                        if (changed) init = Object.assign({}, init, { body: JSON.stringify(body) });
+                    }
+                }
+                const pr = _fetch(input, init);
+                if (url.includes("/api/calculate-scaling")) {
+                    pr.then(res => res.clone().json()).then(r => {
+                        const h3 = document.querySelector("#scaling-panel-view main h3");
+                        if (h3 && r && r.feed_ph !== undefined) {
+                            h3.textContent = (r.ph_adjustment && r.ph_adjustment.chemical)
+                                ? `Saturation Indices (Treated Feed — pH ${r.raw_ph} → ${r.feed_ph}, ${r.ph_adjustment.chemical})`
+                                : `Saturation Indices (Feed Water, pH ${r.raw_ph})`;
+                        }
+                    }).catch(() => {});
+                }
+                return pr;
+            } catch (e) {
+                return _fetch(input, init);
+            }
+        };
+
+        // ---- Genesys analysis table ---------------------------------------------------------------
+        const cls = p => p < 90 ? "as-ok" : (p <= 100 ? "as-warn" : "as-bad");
+        const f1 = v => (v === null || v === undefined) ? "—" : Number(v).toFixed(1);
+
+        function render(r) {
+            const sel = r.selected, rec = r.recommendation, mr = r.max_recovery || {}, w = r.water;
+            const prod = sel && sel.product, t = prod && r.treated_pct[prod], u = r.untreated_pct;
+            let h = `<div class="as-reco"><b>Recommended: ${rec.product}</b> — ${rec.reasons.join("; ")}` +
+                    (prod && prod !== rec.product ? `<br>Selected: <b>${prod}</b>` : "") + `</div>`;
+            if (r.ph_adjustment) {
+                const a = r.ph_adjustment;
+                h += `<div class="as-h">pH adjustment</div><table class="as-tbl"><tr><th>Chemical</th><th>pH raw → feed</th>` +
+                     `<th>Dose 100 % (mg/L)</th><th>Dose ${a.strength_pct} % (mg/L)</th><th>kg/day</th><th>L/day</th></tr>` +
+                     `<tr><td>${a.chemical}</td><td>${w.raw.ph} → ${w.feed.ph}</td><td>${a.dose_100pct_mg_l}</td>` +
+                     `<td>${a.dose_commercial_mg_l}</td><td>${a.kg_per_day_commercial}</td><td>${a.litre_per_day_commercial}</td></tr></table>`;
+            }
+            h += `<div class="as-h">Scaling &amp; fouling — % of maximum (Genesys basis) at ${r.inputs.recovery_pct} % recovery</div>` +
+                 `<table class="as-tbl"><tr><th>Species</th><th>Raw</th><th>Feed</th><th>Conc. untreated</th>` +
+                 (t ? `<th>Feed ${prod}</th><th>Conc. ${prod}</th>` : "") + `<th>Conc. index</th></tr>`;
+            SP.forEach(s => {
+                const cu = u.concentrate[s];
+                if ((s === "Ca3(PO4)2" || s === "Mn") && !cu) return;
+                const ix = r.indices.concentrate[s];
+                h += `<tr><td>${s}</td><td>${f1(u.raw[s])}</td><td>${f1(u.feed[s])}</td><td class="${cls(cu)}">${f1(cu)}</td>` +
+                     (t ? `<td>${f1(t.feed[s])}</td><td class="${cls(t.concentrate[s])}">${f1(t.concentrate[s])}</td>` : "") +
+                     `<td>${s === "CaCO3" ? "LSI " : ""}${ix === undefined ? "—" : Number(ix).toFixed(2)}</td></tr>`;
+            });
+            const sp = t ? 3 : 1;
+            h += `<tr><td>pH</td><td>${w.raw.ph}</td><td>${w.feed.ph}</td><td colspan="${sp}">${w.concentrate.ph}</td><td></td></tr>` +
+                 `<tr><td>TDS (mg/L)</td><td>${w.raw.tds}</td><td>${w.feed.tds}</td><td colspan="${sp}">${w.concentrate.tds}</td><td></td></tr>` +
+                 `<tr><td>Ionic strength</td><td>${w.raw.ionic_strength}</td><td>${w.feed.ionic_strength}</td><td colspan="${sp}">${w.concentrate.ionic_strength}</td><td></td></tr></table>`;
+            h += `<div class="as-h">Antiscalant options</div><div class="as-prods">`;
+            Object.entries(r.doses).forEach(([p, d]) => {
+                const m = mr[p] || {};
+                h += `<div class="${prod === p ? "sel" : ""}"><b>${p}</b><br>` +
+                     `Feed dose: <b>${d.total_feed_dose_mg_l} mg/L</b> (scale ${d.scale_dose_mg_l} + iron ${d.iron_dose_mg_l})<br>` +
+                     `In concentrate: ${d.concentrate_level_mg_l} mg/L<br>` +
+                     (d.kg_per_day ? `${d.kg_per_day} kg/day = ${d.litre_per_day} L/day<br>` : "") +
+                     `Highest: <span class="${cls(d.max_treated_pct)}">${d.limiting_species} ${d.max_treated_pct} %</span><br>` +
+                     `Max recovery: <b>${m.max_recovery_pct ?? "< 40"} %</b>${m.limited_by ? " (" + m.limited_by + ")" : ""}` +
+                     (d.notes.length ? `<div class="as-note">${d.notes.join("<br>")}</div>` : "") + `</div>`;
+            });
+            const un = mr.untreated || {};
+            h += `</div><div style="font-size:0.78rem;margin-top:0.4rem;">Max recovery without antiscalant: <b>${un.max_recovery_pct ?? "< 40"} %</b>` +
+                 `${un.limited_by ? " (" + un.limited_by + ")" : ""}</div>`;
+            if (r.notes && r.notes.length) h += `<div class="as-note">${r.notes.join("<br>")}</div>`;
+            $("as-out").innerHTML = h;
+            window.lastAntiscalantResult = r;
+        }
+
+        async function runAnalysis() {
+            if (!$("as-out")) return;
+            $("as-out").innerHTML = `<div style="font-size:0.8rem;color:var(--text-secondary);">Calculating…</div>`;
+            try {
+                await new Promise(res => setTimeout(res, 50));        // let script.js send its request first (captures API base / auth)
+                const s = settings();
+                const body = Object.assign({ feed_water: feedWater(), feed_flow_m3h: feedFlowM3h() || null }, s);
+                const headers = { "Content-Type": "application/json" };
+                if (api.auth) headers.Authorization = api.auth;
+                const res = await _fetch(api.base + "/api/antiscalant-analysis",
+                                         { method: "POST", headers, credentials: "include", body: JSON.stringify(body) });
+                if (!res.ok) throw new Error((await res.text()) || res.statusText);
+                render(await res.json());
+            } catch (e) {
+                $("as-out").innerHTML = `<div class="as-err">Antiscalant analysis failed: ${e.message}</div>`;
+            }
+        }
+
+        function init() {
+            ["as-rec", "as-chem", "as-tph"].forEach(id => $(id) && $(id).addEventListener("change", () => { touched = true; }));
+            const btn = $("run-phreeqc-btn");
+            if (btn) btn.addEventListener("click", () => { syncDefaults(); runAnalysis(); });
+            const tab = $("scaling-tab-btn");
+            if (tab) tab.addEventListener("click", syncDefaults);
+            if ($("as-prod-sel")) $("as-prod-sel").addEventListener("change", () => { if (window.lastAntiscalantResult) runAnalysis(); });
+            syncDefaults();
+        }
+        if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
+    })();
+    </script>
+
 <div id="global-loader" class="pace-loader--overlay">
   <div class="pace-loader" role="status" aria-live="polite" aria-label="Loading">
     <svg width="180" height="76" viewBox="0 0 420 170" role="img" aria-label="Membrane vessel filling animation with wavy water flow">
@@ -2629,6 +2870,77 @@
     </div>
 </footer>
 
+
+    <!-- ===== Elements per vessel per stage (added 21 Nov 2026) =====
+         "6" = same in every stage; "6, 3" = one value per stage (same order as Vessels per Stage). -->
+    <script>
+    (function () {
+        "use strict";
+        const $ = id => document.getElementById(id);
+        // [elements input, vessels input, error box]
+        const PAIRS = { p1: ["calc-elements-pv", "calc-vessels-array"], p2: ["calc-p2-elements-pv", "calc-p2-vessels-array"] };
+        const parseList = s => String(s || "").split(/[,;\s]+/).map(v => parseInt(v, 10)).filter(v => !isNaN(v));
+
+        // per-stage list, or null when one value / all equal (script.js's own number is then sent unchanged)
+        function epvList(key) {
+            const [eId, vId] = PAIRS[key];
+            if (!$(eId)) return null;
+            const l = parseList($(eId).value);
+            if (l.length < 2 || l.every(v => v === l[0])) return null;
+            const n = $(vId) ? Math.max(1, parseList($(vId).value).length) : l.length;
+            const out = l.slice(0, n);
+            while (out.length < n) out.push(out[out.length - 1]);
+            return out;
+        }
+        function validate(key) {
+            const [eId, vId] = PAIRS[key], e = $(eId);
+            if (!e) return;
+            const l = parseList(e.value), n = $(vId) ? parseList($(vId).value).length : 0;
+            let err = "";
+            if (!l.length) err = "Enter elements per vessel, e.g. 6 or 6, 3";
+            else if (l.some(v => v < 1 || v > 8)) err = "Each value must be 1 to 8";
+            else if (l.length > 1 && n && l.length !== n) err = `Give ${n} values (one per stage) or a single value`;
+            e.style.borderColor = err ? "#ef4444" : "";
+            let m = $(eId + "-err");
+            if (!m) {
+                m = document.createElement("div");
+                m.id = eId + "-err";
+                m.style.cssText = "display:none;font-size:0.72rem;color:#b91c1c;margin-top:3px;";
+                e.insertAdjacentElement("afterend", m);
+            }
+            m.textContent = err; m.style.display = err ? "block" : "none";
+        }
+        function init() {
+            Object.keys(PAIRS).forEach(k => PAIRS[k].forEach(id => {
+                const el = $(id);
+                if (el) ["input", "change"].forEach(ev => el.addEventListener(ev, () => validate(k)));
+            }));
+            Object.keys(PAIRS).forEach(validate);
+        }
+
+        // put the per-stage list into every calculation request
+        const _fetch = window.fetch.bind(window);
+        const API = /\/api\/(calculate-system|calculate-system-physics|generate-calculation-report|simulate-aging|recommend-membrane|auto-select-membrane)\b/;
+        window.fetch = function (input, init) {
+            try {
+                const url = typeof input === "string" ? input : (input && input.url) || "";
+                const l1 = API.test(url) ? epvList("p1") : null, l2 = API.test(url) ? epvList("p2") : null;
+                if ((l1 || l2) && init && typeof init.body === "string" && init.body.trim().startsWith("{")) {
+                    const b = JSON.parse(init.body);
+                    if (l1) {
+                        if ("elements_per_vessel" in b) b.elements_per_vessel = l1;
+                        if (b.system_config && "elements_per_vessel" in b.system_config) b.system_config.elements_per_vessel = l1;
+                        if (b.pass1 && "elements_per_vessel" in b.pass1) b.pass1.elements_per_vessel = l1;
+                    }
+                    if (l2 && b.pass2 && "elements_per_vessel" in b.pass2) b.pass2.elements_per_vessel = l2;
+                    init = Object.assign({}, init, { body: JSON.stringify(b) });
+                }
+            } catch (e) { /* send the request unchanged */ }
+            return _fetch(input, init);
+        };
+        if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
+    })();
+    </script>
 </body>
 </html>
 
