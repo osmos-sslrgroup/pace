@@ -1,9 +1,25 @@
 """
 Multi-Technology System Engine
 Orchestrates UF, RO, and NF calculations based on the selected technology train.
+
+23 Nov 2026 - FEED PRE-TREATMENT FIX
+  * The RO Design "Feed Pre-treatment pH Adjustment" reached the engine as a flat
+    `conditioning` block with no dosing location, so it was applied to the PRODUCT
+    (post-treatment) and the RO feed pH never changed (HCl on permeate pH 5.4 -> 0 dose).
+  * _location() now reads every location field / flag the UI may send
+    (location, dosing_location, dosing_point, position, point, stage, apply_at, ...;
+    apply_to_feed, feed_pretreatment, pre_treatment, ...) and matches free text
+    ("Feed Pre-treatment", "feed_pretreatment", "RO feed", "Product", "Pass 2 feed").
+  * A flat block WITHOUT a location now follows the chemical: acid (HCl / H2SO4) ->
+    RO feed (pre-treatment); NaOH -> product (single pass) or interstage (2-pass).
+  * feed_water.target_ph + feed_water.chemical are used as feed pre-treatment when no
+    other pre-treatment block is sent.
+  * result["feed_water_used"] stays the RAW feed (the treated pH is in
+    result["ro_feed_ph"] / result["feed_conditioning"]["ph_out"]).
 """
 
 import math
+import re
 from typing import Dict, Any, List
 from uf_engine import UFEngine
 from calc_engine import ROEngine, normalize_elements_per_vessel
@@ -52,22 +68,67 @@ def _cfg_dict(obj) -> Dict[str, Any]:
     return {}
 
 
+# ---------------------------------------------------------------------------
+# Dosing-point (location) detection - FIX 23 Nov 2026
+# ---------------------------------------------------------------------------
 _PRE_LOC = ("pre", "feed", "pre-treatment", "pretreatment", "pre_treatment", "ro_feed", "before ro")
 _POST_LOC = ("post", "permeate", "product", "post-treatment", "posttreatment", "post_treatment", "after ro")
 _INTER_LOC = ("interstage", "inter-stage", "inter_stage", "between passes", "pass2_feed", "pass 2 feed")
 
+# Keys that may carry the dosing point as text
+_LOCATION_KEYS = ("location", "dosing_location", "dosing_point", "position", "point", "stage",
+                  "apply_at", "applied_at", "dose_at", "treatment", "treatment_location",
+                  "dosing_stage", "injection_point", "where")
+# Boolean flags that select a dosing point
+_PRE_FLAGS = ("apply_to_feed", "apply_to_ro_feed", "feed_pretreatment", "feed_pre_treatment",
+              "pre_treatment", "pretreatment", "is_feed", "on_feed")
+_POST_FLAGS = ("apply_to_permeate", "apply_to_product", "post_treatment", "posttreatment", "is_product")
+_INTER_FLAGS = ("apply_to_interstage", "interstage_dosing")
+
+_ACID_CHEMS = ("HCl", "H2SO4")
+
+
+def _truthy(v) -> bool:
+    """True for True / 1 / 'true' / 'yes' / 'on' (not for dicts or other objects)."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v == 1
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "yes", "on", "1", "y")
+    return False
+
+
+def _loc_from_text(text) -> str:
+    """'pre' / 'post' / 'interstage' / '' from a free-text location ('Feed Pre-treatment', 'RO feed', ...)."""
+    s = re.sub(r"[^a-z0-9]+", " ", str(text).lower()).strip()
+    if not s:
+        return ""
+    if s in _INTER_LOC or any(w in s for w in ("inter", "pass 2", "pass2", "between pass", "2nd pass", "second pass")):
+        return "interstage"
+    if s in _POST_LOC or any(w in s for w in ("post", "permeate", "product", "after ro", "treated water")):
+        return "post"
+    if s in _PRE_LOC or any(w in s for w in ("pre", "feed", "raw", "before ro", "inlet")):
+        return "pre"
+    return ""
+
 
 def _location(cfg: Dict[str, Any]) -> str:
-    """'pre' / 'post' / 'interstage' / '' from a location-type field of a config block."""
-    loc = str(cfg.get("location") or cfg.get("dosing_point") or cfg.get("position") or "").strip().lower()
-    if cfg.get("apply_to_feed"):
+    """'pre' / 'post' / 'interstage' / '' from any location field or flag of a config block."""
+    if not isinstance(cfg, dict):
+        return ""
+    if any(_truthy(cfg.get(k)) for k in _PRE_FLAGS):
         return "pre"
-    if loc in _PRE_LOC:
-        return "pre"
-    if loc in _POST_LOC:
+    if any(_truthy(cfg.get(k)) for k in _POST_FLAGS):
         return "post"
-    if loc in _INTER_LOC:
+    if any(_truthy(cfg.get(k)) for k in _INTER_FLAGS):
         return "interstage"
+    for k in _LOCATION_KEYS:
+        v = cfg.get(k)
+        if isinstance(v, str) and v.strip():
+            loc = _loc_from_text(v)
+            if loc:
+                return loc
     return ""
 
 
@@ -76,17 +137,21 @@ def _resolve_conditioning(input_data: Dict[str, Any], two_pass: bool = False) ->
     Read every chemical-dosing and degasser setting the UI can send and sort them into
     dosing points:  pre (RO feed), interstage (2-pass only), post (product).
 
-    Accepted shapes (any mix):
+    Accepted shapes (any mix, in this priority):
       conditioning.feed_conditioning / pre_conditioning / pre      -> pre
       conditioning.permeate_conditioning / post_conditioning / post-> post
       conditioning.interstage_conditioning / interstage            -> interstage
-      conditioning = {enabled, chemical, target_ph, location|dosing_point|apply_to_feed}
-          (flat block; without a location it stays interstage for 2-pass and
-           post for single pass, as in the original code — a note is returned)
+      (the same keys at the top level of the request are accepted too)
+      conditioning = {enabled, chemical, target_ph, <location field or flag>}
+          flat block. Without a location (FIX 23 Nov 2026) it follows the chemical:
+          acid (HCl / H2SO4) -> pre (RO feed); NaOH -> post (single pass) /
+          interstage (2-pass); degassing only -> post / interstage as before.
+      feed_water.target_ph + feed_water.chemical                    -> pre (if no pre block)
       degasser / feed_degasser            -> pre    (unless it carries a location)
       permeate_degasser / post_degasser   -> post
       interstage_degasser                 -> interstage
     """
+    from conditioning import normalize_chemical
     cond = _cfg_dict(input_data.get("conditioning"))
     out = {"pre": {}, "post": {}, "interstage": {},
            "pre_degasser": {}, "post_degasser": {}, "interstage_degasser": {}, "notes": []}
@@ -99,29 +164,53 @@ def _resolve_conditioning(input_data: Dict[str, Any], two_pass: bool = False) ->
         return {}
 
     out["pre"] = first(cond.get("feed_conditioning"), cond.get("pre_conditioning"), cond.get("pre"),
+                       cond.get("pretreatment_conditioning"),
                        input_data.get("feed_conditioning"), input_data.get("pre_conditioning"))
     out["post"] = first(cond.get("permeate_conditioning"), cond.get("post_conditioning"), cond.get("post"),
                         input_data.get("permeate_conditioning"), input_data.get("post_conditioning"))
     out["interstage"] = first(cond.get("interstage_conditioning"), cond.get("interstage"),
                               input_data.get("interstage_conditioning"))
+    if not two_pass and out["interstage"] and not out["post"]:
+        out["post"] = out["interstage"]          # single pass has no interstage point
+        out["interstage"] = {}
 
     # Flat conditioning block
     if any(k in cond for k in ("enabled", "chemical", "target_ph", "co2_degassing")):
         loc = _location(cond)
+        note = None
         if not loc:
-            loc = "interstage" if two_pass else "post"
-            if cond.get("enabled"):
-                out["notes"].append(
-                    f"Conditioning block has no dosing location — applied as "
-                    f"{'interstage (before pass 2)' if two_pass else 'post-treatment (product)'}. "
-                    f"Send location='pre' (or apply_to_feed=True) for RO feed dosing.")
+            chem = normalize_chemical(cond.get("chemical"))
+            if chem in _ACID_CHEMS:
+                loc = "pre"
+                note = (f"Dosing location not sent with the conditioning block — {chem} applied to the "
+                        f"RO feed (pre-treatment).")
+            else:
+                loc = "interstage" if two_pass else "post"
+                note = (f"Dosing location not sent with the conditioning block — {chem or 'dosing'} applied as "
+                        f"{'interstage (before pass 2)' if two_pass else 'post-treatment (product)'}.")
+        if loc == "interstage" and not two_pass:
+            loc = "post"
         if not out[loc]:
             out[loc] = cond
+            if note and cond.get("enabled"):
+                out["notes"].append(note)          # only when the fallback location is really used
+        elif _truthy(cond.get("co2_degassing")) and not out[f"{loc}_degasser"]:
+            # the slot already has an explicit block - keep the degassing tick of the flat block
+            out[f"{loc}_degasser"] = {"enabled": True}
+
+    # Feed-water level pH adjustment (Feed Data / Scaling keys) -> RO feed
+    if not out["pre"]:
+        fw = input_data.get("feed_water") or {}
+        if isinstance(fw, dict):
+            tph = fw.get("target_ph", fw.get("feed_target_ph"))
+            chem = fw.get("chemical") or fw.get("dosing_chemical")
+            if tph not in (None, "") and chem:
+                out["pre"] = {"enabled": True, "chemical": chem, "target_ph": tph}
 
     # Degassers
     for key, default_loc in (("degasser", "pre"), ("feed_degasser", "pre"), ("pre_degasser", "pre"),
                              ("permeate_degasser", "post"), ("post_degasser", "post"),
-                             ("interstage_degasser", "interstage")):
+                             ("product_degasser", "post"), ("interstage_degasser", "interstage")):
         for src in (input_data.get(key), cond.get(key)):
             d = _cfg_dict(src)
             if d:
@@ -140,6 +229,7 @@ def _conditioning_info(step: Dict[str, Any], dosing_cfg: Dict[str, Any], ph_in: 
         "chemical": step["chemical"] or dosing_cfg.get("chemical"),
         "dose_mg_l": step["dose_mg_l"],
         "target_ph": step["ph"],                 # pH actually reached (old key name)
+        "requested_target_ph": dosing_cfg.get("target_ph"),
         "ph_in": round(ph_in, 3),
         "ph_out": step["ph"],
         "co2_in_mg_l": round(co2_in, 3),
@@ -317,7 +407,8 @@ class SystemEngine:
             return dict(ions), None, feed_ph
         step = condition_water(ions, feed_ph, pre, degas, co2_mg_l=co2_in, label="Pre-treatment")
         info = _conditioning_info(step, pre, feed_ph, co2_in)
-        info["notes"] = cfg["notes"] + info["notes"]
+        info["notes"] = [n for n in cfg["notes"] if "RO feed" in n] + info["notes"]
+        info["location"] = "pre"
         return step["ions"], info, step["ph"]
 
     @staticmethod
@@ -349,11 +440,12 @@ class SystemEngine:
 
         result = {
             "technology_train": train,
-            "feed_water_used": feed,
+            # FIX 23 Nov 2026: the RAW feed (the local `feed` gets the treated pH below)
+            "feed_water_used": dict(input_data["feed_water"]),
             "uf_results": None,
             "ro_results": None
         }
-        
+
         # 1. UF Simulation
         if "UF" in train:
             # The system feed flow enters the UF.
@@ -446,7 +538,7 @@ class SystemEngine:
                 "Fe": feed.get("iron", 0),
                 "Mn": feed.get("manganese", 0)
             }
-            
+
             # Feed conditioning and degasser before RO bisection (CHANGE 3 & 4)
             # RECYCLE FIX: skipped when the recycle solver has already conditioned the
             # fresh feed (otherwise the recycled concentrate is acid-dosed again).
@@ -480,20 +572,20 @@ class SystemEngine:
                 result["scaling_analysis"] = _scaling_analyse(
                     _sfeed, input_data.get("target_recovery_pct", 75.0),
                     antiscalant=input_data.get("antiscalant_product") or "auto",
-                    feed_flow_m3h=ro_feed_flow, sweep=True)
+                    feed_flow_m3h=input_data.get("_antiscalant_flow_m3h", ro_feed_flow), sweep=True)
             except Exception as _e:
                 result["scaling_analysis"] = {"error": str(_e)}
 
             # Determine starting pressure based on TDS (rough estimate for converging solver)
             est_osmotic_bar = (sum(ions.values()) / 1000.0) * 0.7 # rough rule of thumb
-            
+
             # Solve for feed pressure to achieve the target recovery
             target_recovery = input_data.get("target_recovery_pct", 75.0) / 100.0
-            
+
             low_p = max(1.0, est_osmotic_bar - 5.0)
             high_p = max(120.0, est_osmotic_bar + 60.0)
             tol = input_data.get("_recovery_tol", 0.005) # 0.5% tolerance on recovery (recycle solver: 0.05%)
-            
+
             ro_res = None
             for _ in range(25):
                 mid_p = (low_p + high_p) / 2.0
@@ -517,7 +609,7 @@ class SystemEngine:
                     low_p = mid_p
                 else:
                     high_p = mid_p
-            
+
             result["ro_results"] = ro_res
 
             # ----------------------------------------------------------------
@@ -553,8 +645,9 @@ class SystemEngine:
                 s_ro["product_co2_mg_l"] = step["co2_mg_l"]
                 s_ro["perm_ph"] = step["ph"]              # old behaviour: perm_ph = final pH
                 info = _conditioning_info(step, post_cfg, ph_in, ro_feed_co2)
+                info["location"] = "post"
                 if not input_data.get("_feed_preconditioned"):
-                    info["notes"] = [n for n in cfg_all["notes"] if "post" in n] + info["notes"]
+                    info["notes"] = [n for n in cfg_all["notes"] if "post-treatment" in n] + info["notes"]
                 result["permeate_conditioning"] = info
             else:
                 s_ro["product_ions"] = raw_perm_ions
@@ -713,7 +806,7 @@ class SystemEngine:
                 summary = ro_res["summary"]
                 mem_type = input_data.get("ro_membrane", "BW30-400")
                 membrane = MembraneDatabase.get_ro_membrane(mem_type)
-                
+
                 # Always determine membrane price from the membrane type to avoid
                 # stale cached values from the frontend's eco-mem-cost input
                 if mem_type and "nf" in mem_type.lower():
@@ -725,22 +818,22 @@ class SystemEngine:
                 else:
                     elem_price = 26880.0
 
-                    
+
                 vessels_per_stage = input_data.get("vessels_per_stage", [4, 2])
                 n_vessels = sum(vessels_per_stage)
                 n_elements = _total_elements(vessels_per_stage, input_data.get("elements_per_vessel", 6),
                                              input_data.get("stages", len(vessels_per_stage)))
-                
+
                 c_membranes = n_elements * elem_price
                 c_vessels = n_vessels * eco_params.get("vessel_cost", 48000.0)
-                
+
                 hp_kw = summary.get("hp_pump_power_kw", 0.0)
                 bp_kw = summary.get("booster_pump_power_kw", 0.0)
-                
+
                 pump_cost_kw = eco_params.get("pump_cost_kw", 96000.0)
                 c_hp_pump = hp_kw * pump_cost_kw
                 c_bp_pump = bp_kw * pump_cost_kw
-                
+
                 # --- UF CAPEX/OPEX (added when UF train selected) ---
                 c_uf_modules = 0.0
                 c_uf_pumps = 0.0
@@ -748,39 +841,39 @@ class SystemEngine:
                 uf_mem_repl_pa = 0.0
                 uf_chem_cost_pa = 0.0
                 uf_capex_breakdown = {}
-                
+
                 uf_res = result.get("uf_results")
                 if uf_res:
                     uf_mod_name = input_data.get("uf_module", "PERMA-UF-i0875s40")
                     uf_mod = MembraneDatabase.get_uf_module(uf_mod_name)
                     n_uf_modules = uf_res["overview"]["total_modules"]
-                    
+
                     # CAPEX: UF modules + UF pumps
                     # Use user-specified cost if provided, else fall back to database default
                     uf_unit_cost = eco_params.get("uf_module_cost", uf_mod.get("unit_cost_inr", 120000.0))
                     c_uf_modules = n_uf_modules * uf_unit_cost
-                    
+
                     uf_feed_kw = uf_mod.get("feed_pump_kw_per_module", 0.75) * n_uf_modules
                     uf_bw_kw   = uf_mod.get("backwash_pump_kw_per_module", 1.10) * n_uf_modules
                     c_uf_pumps = (uf_feed_kw + uf_bw_kw) * pump_cost_kw
-                    
+
                     # OPEX: UF energy (feed + BW pumps), CEB chemicals, UF membrane replacement
                     avail_uf = eco_params.get("plant_availability", 0.90)
                     hours_pa_uf = avail_uf * 8760.0
                     tariff = eco_params.get("electricity_tariff", 7.50)
                     uf_energy_cost_pa = (uf_feed_kw + uf_bw_kw) * hours_pa_uf * tariff
-                    
+
                     # CEB chemicals: ~7 g per m³ of net UF permeate (citric acid + NaOCl blended)
                     # Industry practice: dilute CEB ~2x per week, ~200 mg/L NaOCl + 2000 mg/L citric acid
                     # Effective dose blended across production volume ≈ 0.007 kg/m³ net permeate
                     net_uf_flow_m3h = uf_res["overview"]["net_product_m3h"]
                     ceb_kg_pa = 0.007 * net_uf_flow_m3h * hours_pa_uf   # 7 g/m³ net permeate
                     uf_chem_cost_pa = ceb_kg_pa * 30.0                   # ₹30/kg average CEB chemical cost
-                    
+
                     # UF module replacement: ~7 year life
                     uf_mem_life = eco_params.get("uf_membrane_lifetime", 7.0)
                     uf_mem_repl_pa = c_uf_modules / uf_mem_life if uf_mem_life > 0 else 0.0
-                    
+
                     uf_capex_breakdown = {
                         "uf_modules_inr": round(c_uf_modules, 2),
                         "uf_pumps_inr": round(c_uf_pumps, 2),
@@ -788,28 +881,28 @@ class SystemEngine:
                     }
 
                 c_equip_sub = c_membranes + c_vessels + c_hp_pump + c_bp_pump + c_uf_modules + c_uf_pumps
-                
+
                 ic_factor = eco_params.get("ic_factor", 0.15)
                 c_ic = c_equip_sub * ic_factor
-                
+
                 contingency_factor = eco_params.get("contingency_factor", 0.10)
                 c_contingency = (c_equip_sub + c_ic) * contingency_factor
-                
+
                 total_capex = c_equip_sub + c_ic + c_contingency
-                
+
                 # OPEX
                 avail = eco_params.get("plant_availability", 0.90)
                 hours_pa = avail * 8760.0
-                
+
                 total_kw = summary.get("total_power_kw", 0.0)
                 tariff = eco_params.get("electricity_tariff", 7.50)
                 energy_cost_pa = total_kw * hours_pa * tariff + uf_energy_cost_pa
-                
+
                 mem_life = eco_params.get("membrane_lifetime", 5.0)
                 ro_mem_repl_pa = c_membranes / mem_life if mem_life > 0 else 0
                 # uf_mem_repl_pa already computed above (0.0 when no UF)
                 total_mem_repl_pa = ro_mem_repl_pa + uf_mem_repl_pa
-                
+
                 # Antiscalant chemical OPEX (CHANGE 8; Genesys products 21 Nov 2026)
                 as_type = input_data.get("antiscalant_type", "Phosphonate")
                 as_dose = input_data.get("antiscalant_dose_mg_l", 3.0)
@@ -837,22 +930,22 @@ class SystemEngine:
                 ph_chem_cost_pa = chem_kg_pa * chem_price
 
                 total_opex_pa = energy_cost_pa + total_mem_repl_pa + uf_chem_cost_pa + antiscalant_cost_pa + ph_chem_cost_pa
-                
+
                 # Cost per KL
                 discount_rate = eco_params.get("discount_rate", 0.10)
                 project_life = eco_params.get("project_life", 20.0)
                 crf = 0.0
                 if discount_rate > 0 and project_life > 0:
                     crf = (discount_rate * ((1 + discount_rate) ** project_life)) / (((1 + discount_rate) ** project_life) - 1)
-                
+
                 annualised_capex = total_capex * crf
                 total_annual_cost = annualised_capex + total_opex_pa
-                
+
                 q_perm = summary.get("perm_flow", 0.0)
                 q_annual = q_perm * hours_pa
-                
+
                 cost_per_kl = total_annual_cost / q_annual if q_annual > 0 else 0.0
-                
+
                 result["economics"] = {
                     "unit_membrane_cost_inr": elem_price,
                     "capex": {
@@ -896,7 +989,7 @@ class SystemEngine:
                                                  input_data.get("stages", 2))
         result["target_recovery_pct"] = input_data.get("target_recovery_pct", 75.0)
         result["target_flow_m3h"] = input_data.get("target_flow_m3h", 50.0)
-            
+
         return result
 
     def calculate_system_with_recycle(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1115,6 +1208,7 @@ class SystemEngine:
         result["target_recovery_pct"] = r_sys * 100.0
         if cond_info:
             result["feed_conditioning"] = cond_info
+        result["treated_feed_ph"] = round(treated_ph, 3)
 
         result["recycle"] = {
             "enabled": True,
@@ -1164,7 +1258,7 @@ class SystemEngine:
         # FIX 20 Nov 2026: pre-treatment, interstage and post-treatment dosing points
         # and their degassers are all read here (pre/post were ignored in 2P-RO before)
         cond_points = _resolve_conditioning(input_data, two_pass=True)
-        
+
         ion_keys = [
             ("calcium", "Ca"), ("magnesium", "Mg"), ("sodium", "Na"),
             ("potassium", "K"), ("chloride", "Cl"), ("sulfate", "SO4"),
@@ -1187,7 +1281,7 @@ class SystemEngine:
             """Convert Pydantic model or mapping to standard Python dict."""
             if hasattr(obj, "dict"): return obj.dict()
             return obj if isinstance(obj, dict) else {}
-            
+
         pass1_cfg = to_dict(pass1_cfg)
         pass2_cfg = to_dict(pass2_cfg)
         cond_cfg = to_dict(cond_cfg)
@@ -1198,33 +1292,33 @@ class SystemEngine:
             recycle_ratio = rec_cfg.get("recycle_ratio", 0.0) if recycle_enabled else 0.0
         else:
             recycle_ratio = getattr(rec_cfg, "recycle_ratio", 0.0) if recycle_enabled else 0.0
-            
+
         max_iter = 40          # FIX: was 15 — salt in the loop settles slower than flow
         tolerance = 0.001
         q_r_prev = 0.0
         c_r_prev = {k: 0.0 for k in fresh_ions}
         q_p2_prev = None
         tds_r_prev = None      # FIX: convergence now also checks recycle TDS
-        
+
         converged = False
         final_p1_res = None
         final_p2_res = None
         cond_dose = 0.0
         iterations_used = 0
-        
+
         for iteration in range(max_iter):
             iterations_used += 1
-            
+
             q_blend = fresh_flow + q_r_prev
             c_blend = {}
             for k in fresh_ions:
                 c_blend[k] = (fresh_ions[k]*fresh_flow + c_r_prev.get(k,0)*q_r_prev) / q_blend if q_blend > 0 else 0
-                
+
             p1_est_osmotic = (sum(c_blend.values()) / 1000.0) * 0.7
             p1_low = max(1.0, p1_est_osmotic - 5.0)
             p1_high = max(120.0, p1_est_osmotic + 60.0)
             p1_target_rec = pass1_cfg.get("target_recovery_pct", 75.0) / 100.0
-            
+
             p1_res = None
             for _ in range(25):
                 mid_p = (p1_low + p1_high) / 2.0
@@ -1245,10 +1339,10 @@ class SystemEngine:
                 if abs(rec - p1_target_rec) < 0.005: break
                 if rec < p1_target_rec: p1_low = mid_p
                 else: p1_high = mid_p
-                
+
             p1_perm_flow = p1_res["summary"]["perm_flow"]
             p1_perm_ions = p1_res["summary"]["perm_ions"]
-            
+
             # Pass-1 permeate pH from HCO3 and CO2 (CO2 passes the membrane)
             p1_perm_ions = {k: v for k, v in p1_perm_ions.items() if k not in ("CO2", "pH")}
             p1_perm_ph = p1_res["summary"].get("perm_ph")
@@ -1271,7 +1365,7 @@ class SystemEngine:
             cond_dose = step["dose_mg_l"]
             p2_feed_ph, p2_feed_co2 = step["ph"], step["co2_mg_l"]
             inter_info = _conditioning_info(step, inter_cfg, p1_perm_ph, feed_co2)
-            
+
             p2_est_osmotic = (sum(p2_feed_ions.values()) / 1000.0) * 0.7
             p2_low = max(1.0, p2_est_osmotic - 2.0)
             p2_high = max(60.0, p2_est_osmotic + 40.0)
@@ -1327,14 +1421,14 @@ class SystemEngine:
                 if abs(rec - p2_target_rec) < 0.005: break
                 if rec < p2_target_rec: p2_low = mid_p
                 else: p2_high = mid_p
-                
+
             p2_conc_flow = p2_res["summary"]["conc_flow"]
             p2_conc_ions = p2_res["summary"]["conc_ions"]
             p2_perm_flow = p2_res["summary"]["perm_flow"]
-            
+
             q_r_new = recycle_ratio * p2_conc_flow
             c_r_new = p2_conc_ions.copy()
-            
+
             tds_r_new = _tds(c_r_new)
             if q_p2_prev is not None and q_p2_prev > 0 and tds_r_prev:
                 delta = abs(p2_perm_flow - q_p2_prev) / q_p2_prev
@@ -1346,14 +1440,14 @@ class SystemEngine:
                     final_p1_res = p1_res
                     final_p2_res = p2_res
                     break
-                    
+
             q_r_prev = q_r_new
             c_r_prev = c_r_new
             q_p2_prev = p2_perm_flow
             tds_r_prev = tds_r_new
             final_p1_res = p1_res
             final_p2_res = p2_res
-            
+
         # Pass-2 permeate pH, then post-treatment on the final product
         post_info = None
         if final_p2_res:
@@ -1460,52 +1554,52 @@ class SystemEngine:
         """Calculate combined capital and operating expenditures for two-pass RO system."""
         mem1_price = 26880.0
         mem2_price = 26880.0
-        
+
         vps1 = pass1_cfg.get("vessels_per_stage", [4, 2])
         vps2 = pass2_cfg.get("vessels_per_stage", [2])
         n_vessels1, n_vessels2 = sum(vps1), sum(vps2)
         n_elems1 = _total_elements(vps1, pass1_cfg.get("elements_per_vessel", 6), pass1_cfg.get("stages", len(vps1)))
         n_elems2 = _total_elements(vps2, pass2_cfg.get("elements_per_vessel", 6), pass2_cfg.get("stages", len(vps2)))
-        
+
         c_membranes = (n_elems1 * mem1_price) + (n_elems2 * mem2_price)
         c_vessels = (n_vessels1 + n_vessels2) * eco_params.get("vessel_cost", 48000.0)
-        
+
         hp_kw = p1_res["summary"]["hp_pump_power_kw"] + p2_res["summary"]["hp_pump_power_kw"]
         bp_kw = p1_res["summary"]["booster_pump_power_kw"] + p2_res["summary"]["booster_pump_power_kw"]
-        
+
         pump_cost_kw = eco_params.get("pump_cost_kw", 96000.0)
         c_hp_pump = hp_kw * pump_cost_kw
         c_bp_pump = bp_kw * pump_cost_kw
-        
+
         c_equip_sub = c_membranes + c_vessels + c_hp_pump + c_bp_pump
         ic_factor = eco_params.get("ic_factor", 0.15)
         contingency_factor = eco_params.get("contingency_factor", 0.10)
         c_ic = c_equip_sub * ic_factor
         c_contingency = (c_equip_sub + c_ic) * contingency_factor
         total_capex = c_equip_sub + c_ic + c_contingency
-        
+
         avail = eco_params.get("plant_availability", 0.90)
         hours_pa = avail * 8760.0
         tariff = eco_params.get("electricity_tariff", 7.50)
         energy_cost_pa = (hp_kw + bp_kw) * hours_pa * tariff
         mem_life = eco_params.get("membrane_lifetime", 5.0)
         mem_repl_pa = c_membranes / mem_life if mem_life > 0 else 0.0
-        
+
         # interstage dose + pre/post-treatment doses (FIX: pre/post were not costed)
         chem_kg_pa = ((cond_dose / 1000.0) * p1_perm_flow + extra_chem_kg_h) * hours_pa
         chem_cost_pa = chem_kg_pa * eco_params.get("chemical_cost_per_kg", 20.0)
-        
+
         total_opex_pa = energy_cost_pa + mem_repl_pa + chem_cost_pa
-        
+
         discount = eco_params.get("discount_rate", 0.10)
         life = eco_params.get("project_life", 20.0)
         crf = (discount * ((1 + discount)**life)) / (((1 + discount)**life) - 1) if discount > 0 else 0
         annualised_capex = total_capex * crf
         total_annual = annualised_capex + total_opex_pa
-        
+
         q_annual = p2_res["summary"]["perm_flow"] * hours_pa
         cost_per_kl = total_annual / q_annual if q_annual > 0 else 0
-        
+
         return {
             "unit_membrane_cost_inr": mem1_price,
             "capex": {
