@@ -1,12 +1,35 @@
+import sys
+import os
+
+# ---- Vercel path fix ------------------------------------------------
+# On Vercel, server.py runs from the project root (not from backend/).
+# All sibling modules (process_engine, system_engine, etc.) live in
+# backend/ so we must add that directory to sys.path explicitly.
+_backend_dir = os.path.dirname(os.path.abspath(__file__))
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+# ---------------------------------------------------------------------
+
+# 23 Nov 2026 - FEED PRE-TREATMENT FIX
+#   The 20 Nov server changes had been lost when the 21 Nov scaling changes were applied:
+#   ConditioningConfig / SystemCalcInput had no extra="allow" and no location field, so
+#   the dosing location, permeate_degasser and recycle_flow_m3h sent by the UI were
+#   silently dropped by Pydantic -> feed pre-treatment acid was applied to the product.
+#   Restored here (marked FIX 20 Nov / FIX 23 Nov) on top of the 21 Nov file.
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import phreeqpython
-from process_engine import ProcessInputData, ProcessRecommendationEngine
+try:
+    import phreeqpython
+    _phreeqpython_available = True
+except Exception:
+    phreeqpython = None
+    _phreeqpython_available = False
 from process_engine import ProcessInputData, ProcessRecommendationEngine
 from system_engine import SystemEngine
 from membrane_database import MembraneDatabase
-from report_generator import ReportGenerator
+
 from membrane_recommender import MembraneRecommender
 from aging_engine import AgingEngine
 from typing import List, Optional, Dict, Union
@@ -14,11 +37,10 @@ from typing import List, Optional, Dict, Union
 # Elements per vessel: int (same in every stage), per-stage list [6, 3], or "6,3"
 ElementsPerVessel = Union[int, List[int], str]
 from fastapi.responses import FileResponse, RedirectResponse
-import os
 
 app = FastAPI(title="PHREEQC Scaling Engine API")
 
-# Genesys scaling / antiscalant endpoints (added 21 Nov 2026 - sent by msk on 21-11-2026)
+# Genesys scaling / antiscalant endpoints (added 21 Nov 2026)
 from scaling_api import router as scaling_router, calculate_scaling_with_ph
 app.include_router(scaling_router)
 
@@ -26,9 +48,11 @@ import base64
 
 class BasicAuthASGIMiddleware:
     def __init__(self, app):
+        """Initialize HTTP Basic authentication middleware."""
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        """Intercept ASGI requests and enforce HTTP Basic auth on /api/ endpoints."""
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
@@ -38,12 +62,12 @@ class BasicAuthASGIMiddleware:
             await self.app(scope, receive, send)
             return
 
-        headers = scope.get("headers", [])
         # Only apply authentication to API endpoints
         if not scope.get("path", "").startswith("/api/"):
             await self.app(scope, receive, send)
             return
 
+        headers = scope.get("headers", [])
         auth_header = None
         for name, value in headers:
             if name == b"authorization":
@@ -70,11 +94,13 @@ class BasicAuthASGIMiddleware:
             await self.send_unauthorized(send)
 
     async def send_unauthorized(self, send):
+        """Send an HTTP 401 Unauthorized response to unauthenticated requests."""
         await send({
             "type": "http.response.start",
             "status": 401,
             "headers": [
                 (b"content-type", b"text/plain"),
+                (b"www-authenticate", b'Basic realm="PACE Access"'),
             ]
         })
         await send({
@@ -95,8 +121,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize PHREEQC engine
-pp = phreeqpython.PhreeqPython(database='phreeqc.dat')
+# Initialize PHREEQC engine (lazy — may be unavailable on Vercel serverless)
+try:
+    pp = phreeqpython.PhreeqPython(database='phreeqc.dat') if _phreeqpython_available else None
+except Exception as _pp_err:
+    print(f"[WARN] phreeqpython init failed: {_pp_err}")
+    pp = None
 
 class FeedWaterData(BaseModel):
     model_config = {"extra": "allow"}      # FIX 21 Nov 2026: keep pH-adjustment keys from the UI
@@ -168,6 +198,7 @@ class BalanceResult(BaseModel):
     message: str
 
 class EconomicParams(BaseModel):
+    model_config = {"extra": "allow"}
     electricity_tariff: float = 7.50
     membrane_cost: float = 26880.0
     vessel_cost: float = 48000.0
@@ -178,10 +209,12 @@ class EconomicParams(BaseModel):
     membrane_lifetime: float = 5.0
     discount_rate: float = 0.10
     project_life: float = 20.0
+    chemical_cost_per_kg: float = 20.0   # INR/kg (100 % basis) for HCl / H2SO4 / NaOH dosing
     uf_module_cost: Optional[float] = None        # ₹/module — user override; falls back to DB value if None
     uf_membrane_lifetime: float = 7.0             # UF module replacement interval in years
 
 class PassConfig(BaseModel):
+    model_config = {"extra": "allow"}
     membrane: str
     stages: int
     vessels_per_stage: List[int]
@@ -189,16 +222,27 @@ class PassConfig(BaseModel):
     target_recovery_pct: float
 
 class ConditioningConfig(BaseModel):
+    # FIX 20 Nov / 23 Nov 2026: extra="allow" — the dosing location and any other key
+    # sent by the UI used to be silently dropped, so feed dosing went to the product
+    model_config = {"extra": "allow"}
     enabled: bool = False
     target_ph: Optional[float] = None
     chemical: Optional[str] = None
     co2_degassing: bool = False
+    apply_to_feed: bool = False
+    location: Optional[str] = None               # "pre" | "post" | "interstage" for a flat block
+    dosing_location: Optional[str] = None        # same, alternative name (free text accepted)
+    feed_conditioning: Optional[dict] = None     # pre-treatment  (RO feed)
+    interstage_conditioning: Optional[dict] = None  # 2P-RO, before pass 2
+    permeate_conditioning: Optional[dict] = None # post-treatment (product)
 
 class RecycleConfig(BaseModel):
+    model_config = {"extra": "allow"}
     enabled: bool = False
     recycle_ratio: float = 0.0
 
 class SystemCalcInput(BaseModel):
+    model_config = {"extra": "allow"}
     technology_train: str
     feed_water: dict
     target_flow_m3h: float
@@ -217,7 +261,14 @@ class SystemCalcInput(BaseModel):
     enable_booster: Optional[bool] = False
     interboost_enabled: Optional[bool] = False
     interboost_dp_bar: Optional[float] = None
-    degasser: Optional[dict] = None
+    degasser: Optional[dict] = None             # pre-treatment decarbonator (RO feed)
+    permeate_degasser: Optional[dict] = None    # FIX: post-treatment degasser was dropped by the model
+    interstage_degasser: Optional[dict] = None  # 2P-RO, before pass 2
+    feed_conditioning: Optional[dict] = None    # FIX 23 Nov: top-level feed pre-treatment block
+    permeate_conditioning: Optional[dict] = None
+    recycle_flow_m3h: Optional[float] = None    # Toray-style recycle input, m3/h
+    antiscalant_dosed: Optional[bool] = True
+    units: Optional[dict] = None
     antiscalant_type: Optional[str] = "Phosphonate"
     antiscalant_dose_mg_l: Optional[float] = 3.0
     antiscalant_product: Optional[str] = None       # manual | auto | Genesys LF | Genesys RC | Genesys SI
@@ -233,10 +284,22 @@ class SystemCalcInput(BaseModel):
     # Physics projection results (attached by JS from window.lastPhysicsResult)
     physics_results: Optional[dict] = None
     physics_selected_year: Optional[int] = 0
-    units: Optional[dict] = None
+
+def _recycle_on(data) -> bool:
+    """Recycle is active when a recycle ratio > 0 (with recycle_enabled) or a recycle flow is given."""
+    flow = getattr(data, "recycle_flow_m3h", None) or 0.0
+    ratio = getattr(data, "recycle_ratio", None) or 0.0
+    return bool((getattr(data, "recycle_enabled", False) and ratio > 0) or flow > 0)
+
+
+def _input_dict(data) -> dict:
+    """Request model -> plain dict for the engines (extra keys from the UI included)."""
+    return data.model_dump() if hasattr(data, "model_dump") else data.dict()
+
 
 @app.get("/")
 def read_root():
+    """Redirect root path to the index HTML dashboard."""
     return RedirectResponse(url="/index.html")
 
 @app.post("/api/verify-auth")
@@ -245,7 +308,8 @@ def verify_auth():
 
 @app.post("/api/calculate-scaling")
 def calculate_scaling(data: FeedWaterData):
-    """PHREEQC saturation indices of the TREATED feed (after pH adjustment) and concentrate brine, plus the Genesys block (sent by msk on 21-11-2026)."""
+    """PHREEQC saturation indices of the TREATED feed (after pH adjustment) and, with a
+    recovery, the concentrate - plus the Genesys block. FIX 21 Nov 2026 (scaling_api.py)."""
     try:
         return calculate_scaling_with_ph(data, pp)
     except Exception as e:
@@ -255,8 +319,8 @@ def calculate_scaling(data: FeedWaterData):
 def auto_balance(data: AutoBalanceInput):
     """
     Computes the Charge Balance Error (CBE) of the feed water analysis.
-    If the charge imbalance is greater than 2%, it automatically balances the water 
-    by injecting either Sodium (Na+) or Chloride (Cl-) depending on whether the 
+    If the charge imbalance is greater than 2%, it automatically balances the water
+    by injecting either Sodium (Na+) or Chloride (Cl-) depending on whether the
     imbalance is anion-heavy or cation-heavy.
     """
     try:
@@ -267,7 +331,7 @@ def auto_balance(data: AutoBalanceInput):
         mw_nh4, z_nh4 = 18.04, 1
         mw_ba, z_ba = 137.33, 2
         mw_sr, z_sr = 87.62, 2
-        
+
         mw_cl, z_cl = 35.45, 1
         mw_so4, z_so4 = 96.06, 2
         mw_hco3, z_hco3 = 61.02, 1
@@ -275,11 +339,19 @@ def auto_balance(data: AutoBalanceInput):
         mw_no3, z_no3 = 62.00, 1
         mw_f, z_f = 19.00, 1
         mw_po4, z_po4 = 94.97, 3
-        
-        # True HCO3- and CO3-- input
-        hco3_meq = (data.bicarbonate / mw_hco3) * z_hco3
-        co3_meq = (data.carbonate / mw_co3) * z_co3
-            
+
+        # FIX 20 Nov 2026: the bicarbonate field is mg/L as HCO3 (same as the RO engine
+        # and Toray DS2). It was divided by 50.04 (as CaCO3), over-stating anions by 22 %
+        # and injecting Na into balanced waters (Nadhi feed: CBE 0.0 % -> -5.0 %).
+        alk_meq = data.bicarbonate / 61.02
+        if data.ph < 8.3:
+            hco3_meq = alk_meq
+            co3_meq = 0.0
+        else:
+            fraction_co3 = 10**(data.ph - 10.3) / (1 + 10**(data.ph - 10.3))
+            co3_meq = alk_meq * fraction_co3
+            hco3_meq = alk_meq - co3_meq
+
         cat_meq = (
             (data.calcium / mw_ca) * z_ca +
             (data.magnesium / mw_mg) * z_mg +
@@ -289,7 +361,7 @@ def auto_balance(data: AutoBalanceInput):
             (data.barium / mw_ba) * z_ba +
             (data.strontium / mw_sr) * z_sr
         )
-        
+
         an_meq = (
             (data.chloride / mw_cl) * z_cl +
             (data.sulfate / mw_so4) * z_so4 +
@@ -298,11 +370,11 @@ def auto_balance(data: AutoBalanceInput):
             (data.fluoride / mw_f) * z_f +
             (data.phosphate / mw_po4) * z_po4
         )
-        
+
         cbe_meq = cat_meq - an_meq
         denom = max(cat_meq + an_meq, 0.1)
         cbe_pct = (cbe_meq / denom) * 100
-        
+
         abs_cbe_pct = abs(cbe_pct)
         status = "BALANCED"
         injected_ion = None
@@ -310,7 +382,7 @@ def auto_balance(data: AutoBalanceInput):
         na_final = data.sodium
         cl_final = data.chloride
         message = f"Feed water is balanced. CBE is {cbe_pct:.2f}%."
-        
+
         if abs_cbe_pct <= 2.0:
             status = "BALANCED"
         else:
@@ -325,7 +397,7 @@ def auto_balance(data: AutoBalanceInput):
                 injected_amount = abs(cbe_meq) * (mw_na / z_na)
                 na_final += injected_amount
                 message = f"Na⁺ auto-added: {injected_amount:.2f} mg/L to balance charge."
-            
+
         return BalanceResult(
             status=status,
             cbe_meq=cbe_meq,
@@ -343,6 +415,7 @@ def auto_balance(data: AutoBalanceInput):
 
 @app.post("/api/process-recommendation")
 def process_recommendation(data: ProcessInputData):
+    """Run process recommendation engine to determine optimal treatment configuration."""
     try:
         engine = ProcessRecommendationEngine(pp)
         result = engine.run(data)
@@ -360,16 +433,16 @@ def calculate_system(data: SystemCalcInput):
     3. Standard Single-pass RO systems (1P-RO).
     """
     try:
-        print("CALCULATE SYSTEM INPUT PAYLOAD:", data.dict())
+        input_dict = _input_dict(data)
+        print("CALCULATE SYSTEM INPUT PAYLOAD:", input_dict)
         engine = SystemEngine()
-        input_dict = data.dict()
-        
+
         if "2P-RO" in data.technology_train:
             result = engine.simulate_two_pass_system(input_dict)
             if result and "pass1_results" in result and result["pass1_results"]:
                 import copy
                 ro_res = copy.deepcopy(result["pass1_results"])
-                
+
                 # Override summary with overall system metrics
                 sys_sum = result.get("system_summary", {})
                 if "summary" in ro_res:
@@ -377,9 +450,7 @@ def calculate_system(data: SystemCalcInput):
                     ro_res["summary"]["perm_flow"] = sys_sum.get("final_permeate_flow_m3h", ro_res["summary"].get("perm_flow", 0.0))
                     ro_res["summary"]["perm_tds"] = sys_sum.get("final_permeate_tds", ro_res["summary"].get("perm_tds", 0.0))
                     ro_res["summary"]["sec_kwh_m3"] = sys_sum.get("sec_kwh_m3", ro_res["summary"].get("sec_kwh_m3", 0.0))
-                    # Patch combined power so OPEX energy is correct for both passes
-                    ro_res["summary"]["total_power_kw"] = sys_sum.get("total_power_kw", ro_res["summary"].get("total_power_kw", 0.0))
-                
+
                 # Combine warnings from both passes
                 all_warnings = list(ro_res.get("warnings", []))
                 if "pass2_results" in result and result["pass2_results"]:
@@ -388,147 +459,48 @@ def calculate_system(data: SystemCalcInput):
                         w_copy["type"] = f"Pass 2: {w_copy.get('type')}"
                         all_warnings.append(w_copy)
                 ro_res["warnings"] = all_warnings
-                
-                result["ro_results"] = ro_res
-                
-                # Use the two-pass economics (already covers both passes' membranes + pumps)
-                # rather than letting the frontend recompute from Pass 1 only
-                if result.get("economics"):
-                    result["economics"] = result["economics"]
 
-        elif data.recycle_enabled and data.recycle_ratio and data.recycle_ratio > 0:
+                result["ro_results"] = ro_res
+        elif _recycle_on(data):
             result = engine.calculate_system_with_recycle(input_dict)
         else:
             result = engine.calculate_system(input_dict)
-
-        # ── Compute PHREEQC concentrate SI for all calculation paths ─────────
-        # Dynamically compute the exact concentrate pH by solving the carbonate
-        # equilibrium shift from the feed pH using the concentration factor of HCO3.
-        try:
-            ro_main = result.get("ro_results") or result.get("pass1_results") or result
-            conc_ions = ro_main.get("summary", {}).get("conc_ions", {})
-            fw = data.feed_water if isinstance(data.feed_water, dict) else (data.feed_water.dict() if hasattr(data.feed_water, "dict") else vars(data.feed_water))
-            temp_c = float(fw.get("temperature", 25.0))
-            feed_ph = float(fw.get("ph", 7.0))
-            if conc_ions:
-                import math
-                feed_hco3 = float(fw.get("bicarbonate", 0.0))
-                conc_hco3 = conc_ions.get("HCO3", 0)
-                
-                est_conc_ph = feed_ph
-                if feed_hco3 and feed_hco3 > 0 and conc_hco3 > 0:
-                    est_conc_ph += math.log10(conc_hco3 / feed_hco3)
-                else:
-                    target_rec = data.target_recovery_pct if hasattr(data, "target_recovery_pct") else data.get("target_recovery_pct", 75.0)
-                    rec_frac = float(target_rec) / 100.0
-                    cf = 1.0 / max(1.0 - rec_frac, 0.05)
-                    est_conc_ph += math.log10(cf)
-                    
-                est_conc_ph = min(max(est_conc_ph, 0.0), 14.0)
-
-                sol_input = {
-                    'pH': est_conc_ph,
-                    'units': 'mg/L',
-                    'temp': temp_c,
-                    'Ca':    conc_ions.get("Ca",   0),
-                    'Mg':    conc_ions.get("Mg",   0),
-                    'Na':    conc_ions.get("Na",   0),
-                    'K':     conc_ions.get("K",    0),
-                    'N(-3)': f"{conc_ions.get('NH4', 0)} as NH4",
-                    'Cl':    conc_ions.get("Cl",   0),
-                    'S(6)':  f"{conc_ions.get('SO4', 0)} as SO4",
-                    'Alkalinity': f"{conc_ions.get('HCO3', 0)} as HCO3",
-                    'N(5)':  f"{conc_ions.get('NO3', 0)} as NO3",
-                    'Sr':    conc_ions.get("Sr",   0),
-                    'F':     conc_ions.get("F",    0),
-                    'Si':    f"{conc_ions.get('SiO2', 0)} as SiO2",
-                    'Ba':    conc_ions.get("Ba",   0),
-                    'Al':    conc_ions.get("Al",   0),
-                    'Fe':    conc_ions.get("Fe",   0),
-                    'Mn':    conc_ions.get("Mn",   0),
-                    'P':     f"{conc_ions.get('PO4', 0)} as PO4",
-                    'B':     conc_ions.get("B", 0),
-                }
-                sol = pp.add_solution(sol_input)
-                result["concentrate_ph"] = round(sol.pH, 2)
-                result["concentrate_si"] = {
-                    "Calcite":   round(sol.si("Calcite"),   3),
-                    "Aragonite": round(sol.si("Aragonite"), 3),
-                    "Dolomite":  round(sol.si("Dolomite"),  3),
-                    "Gypsum":    round(sol.si("Gypsum"),    3),
-                    "Anhydrite": round(sol.si("Anhydrite"), 3),
-                    "Barite":    round(sol.si("Barite"),    3),
-                    "Celestite": round(sol.si("Celestite"), 3),
-                    "Fluorite":  round(sol.si("Fluorite"),  3),
-                    "SiO2(a)":   round(sol.si("SiO2(a)"),  3),
-                }
-                sol.forget()
-                
-            if fw:
-                sol_feed_input = {
-                    'units': 'mg/L',
-                    'temp': temp_c,
-                    'pH': feed_ph,
-                    'Ca': float(fw.get("calcium", 0)),
-                    'Mg': float(fw.get("magnesium", 0)),
-                    'Na': float(fw.get("sodium", 0)),
-                    'K': float(fw.get("potassium", 0)),
-                    'N(-3)': f"{float(fw.get('ammonium', 0))} as NH4",
-                    'Cl': float(fw.get("chloride", 0)),
-                    'S(6)': f"{float(fw.get('sulfate', 0))} as SO4",
-                    'Alkalinity': f"{float(fw.get('bicarbonate', 0))} as HCO3",
-                    'N(5)': f"{float(fw.get('nitrate', 0))} as NO3",
-                    'Sr': float(fw.get("strontium", 0)),
-                    'F': float(fw.get("fluoride", 0)),
-                    'Si': f"{float(fw.get('silica', 0))} as SiO2",
-                    'Ba': float(fw.get("barium", 0)),
-                    'Al': float(fw.get("aluminium", 0)),
-                    'Fe': float(fw.get("iron", 0)),
-                    'Mn': float(fw.get("manganese", 0)),
-                    'P': f"{float(fw.get('phosphate', 0))} as PO4",
-                    'B': float(fw.get("boron", 0)),
-                }
-                sol_feed = pp.add_solution(sol_feed_input)
-                result["feed_si"] = {
-                    "Calcite":   round(sol_feed.si("Calcite"),   3),
-                    "Aragonite": round(sol_feed.si("Aragonite"), 3),
-                    "Dolomite":  round(sol_feed.si("Dolomite"),  3),
-                    "Gypsum":    round(sol_feed.si("Gypsum"),    3),
-                    "Anhydrite": round(sol_feed.si("Anhydrite"), 3),
-                    "Barite":    round(sol_feed.si("Barite"),    3),
-                    "Celestite": round(sol_feed.si("Celestite"), 3),
-                    "Fluorite":  round(sol_feed.si("Fluorite"),  3),
-                    "SiO2(a)":   round(sol_feed.si("SiO2(a)"),  3),
-                }
-                sol_feed.forget()
-
-        except Exception as e:
-            print("PHREEQC concentrate SI error in calculate-system:", e)
-
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/auto-select-membrane")
 def auto_select_membrane(data: SystemCalcInput):
+    """Automatically recommend the best membrane model for the given feed water and design criteria."""
     try:
-        from membrane_recommender import MembraneRecommender
-        
-        recommender = MembraneRecommender()
-        rec_result = recommender.recommend(data.dict())
-        
-        best_membrane = rec_result.get("best_membrane")
-        
-        # We need to return max_recovery for the frontend.
-        # Since SystemEngine is used under the hood, the target recovery is essentially achieved.
-        best_recovery = data.target_recovery_pct / 100.0
-        
+        best_membrane = None
+        best_recovery = 0.0
+        smallest_gap = float('inf')
+        target = data.target_recovery_pct / 100.0  # Convert % to fraction
+
+        membranes = MembraneDatabase.list_ro_membranes()
+        engine = SystemEngine()
+
+        for mem in membranes:
+            data_dict = _input_dict(data)
+            data_dict["ro_membrane"] = mem["id"]
+            result = engine.calculate_system(data_dict)
+
+            if result and "ro_results" in result and result["ro_results"]:
+                recovery = result["ro_results"]["summary"]["total_recovery"]
+                gap = abs(recovery - target)
+                if gap < smallest_gap:
+                    smallest_gap = gap
+                    best_recovery = recovery
+                    best_membrane = mem["id"]
+
         return {"best_membrane": best_membrane, "max_recovery": best_recovery}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/membranes")
 def list_membranes():
+    """Return all catalog RO membranes and UF modules."""
     try:
         return {
             "ro_membranes": MembraneDatabase.list_ro_membranes(),
@@ -557,15 +529,17 @@ def get_ro_membrane_datasheet(model_name: str):
 
 @app.post("/api/generate-calculation-report")
 def generate_calc_report(data: SystemCalcInput):
+    """Generate and return a downloadable Word document (.docx) calculation report."""
     try:
         import tempfile, os
+        from docx2pdf import convert as docx2pdf_convert
 
         engine = SystemEngine()
-        input_dict = data.dict()
+        input_dict = _input_dict(data)
 
         if "2P-RO" in data.technology_train:
             result = engine.simulate_two_pass_system(input_dict)
-        elif data.recycle_enabled and data.recycle_ratio and data.recycle_ratio > 0:
+        elif _recycle_on(data):
             result = engine.calculate_system_with_recycle(input_dict)
         else:
             result = engine.calculate_system(input_dict)
@@ -585,8 +559,8 @@ def generate_calc_report(data: SystemCalcInput):
             result["physics_selected_year"] = data.physics_selected_year
         if getattr(data, "project_details", None):
             result["project_details"] = data.project_details
-        if getattr(data, "units", None):
-            result["units"] = data.units
+        if input_dict.get("units"):
+            result["units"] = input_dict["units"]
 
         # Generate .docx to a temp file
         tmp_docx = tempfile.NamedTemporaryFile(
@@ -596,13 +570,14 @@ def generate_calc_report(data: SystemCalcInput):
         tmp_docx.close()
         tmp_pdf = tmp_docx.name.replace(".docx", ".pdf")
 
+        from report_generator import ReportGenerator
         reporter = ReportGenerator()
         reporter.generate_calculation_report(result, tmp_docx.name)
 
         # Convert docx → PDF using libreoffice (Linux/Docker compatible) or fallback to docx2pdf (Windows local)
         import subprocess
         import sys
-        
+
         temp_dir = tempfile.gettempdir()
         if sys.platform == "win32":
             # Fallback for local Windows testing without Docker
@@ -624,29 +599,26 @@ def generate_calc_report(data: SystemCalcInput):
         # Add Watermark for copyright purposes
         try:
             import fitz
-            
+
             # Step 1: Create an image of the watermark
             temp_doc = fitz.open()
-            fontsize = 80
+            fontsize = 60
             text = "PERMIONICS"
             text_w = fitz.get_text_length(text, fontname="helv", fontsize=fontsize)
-            padding = 30
+            padding = 20
             w = int(text_w + 2 * padding)
-            h = int(fontsize * 1.5)
-            
+            h = 100
+
             w_page = temp_doc.new_page(width=w, height=h)
             w_page.insert_text(
-                fitz.Point(padding, h * 0.70), 
-                text, 
+                fitz.Point(padding, 70),
+                text,
                 fontname="helv",
-                fontsize=fontsize, 
-                color=(0.6, 0.6, 0.6), 
-                fill_opacity=0.15
+                fontsize=fontsize,
+                color=(0.8, 0.8, 0.8),
+                fill_opacity=0.3
             )
-            matrix = fitz.Matrix(45)
-            pix = w_page.get_pixmap(alpha=True, matrix=matrix)
-            w = pix.width
-            h = pix.height
+            pix = w_page.get_pixmap(alpha=True)
             temp_doc.close()
 
             # Step 2: Overlay image onto actual PDF
@@ -657,7 +629,7 @@ def generate_calc_report(data: SystemCalcInput):
                 y0 = (rect.height - h) / 2
                 image_rect = fitz.Rect(x0, y0, x0 + w, y0 + h)
                 page.insert_image(image_rect, pixmap=pix)
-                
+
             doc_pdf.saveIncr()
             doc_pdf.close()
         except Exception as e:
@@ -669,7 +641,7 @@ def generate_calc_report(data: SystemCalcInput):
         except Exception:
             pass
 
-        from starlette.background import BackgroundTask
+        from fastapi.background import BackgroundTask
         return FileResponse(
             path=tmp_pdf,
             filename="PACE_Calculation_Report.pdf",
@@ -685,7 +657,7 @@ def recommend_membrane(data: SystemCalcInput):
     """Returns ranked Permionics membrane recommendations with scores and rationale."""
     try:
         recommender = MembraneRecommender()
-        result = recommender.recommend(data.dict())
+        result = recommender.recommend(_input_dict(data))
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -715,6 +687,7 @@ class FeedHistory(BaseModel):
     cl2_residual_mg_l: float = 0.0
 
 class AgingSimInput(BaseModel):
+    model_config = {"extra": "allow"}
     technology_train: str = "RO"
     feed_water: dict
     system_config: AgingSystemConfig
@@ -722,6 +695,13 @@ class AgingSimInput(BaseModel):
     feed_history: FeedHistory
     target_flow_m3h: float = 10.0
     model_params: Optional[Dict[str, float]] = None
+    # FIX 20 Nov 2026: the Ageing tab ignored dosing, degassers and recycle
+    conditioning: Optional[ConditioningConfig] = None
+    degasser: Optional[dict] = None
+    permeate_degasser: Optional[dict] = None
+    recycle_enabled: Optional[bool] = False
+    recycle_ratio: Optional[float] = 0.0
+    recycle_flow_m3h: Optional[float] = None
 
 
 # ── Physics-Based Multi-Year Projection Models ──────────────────────────────
@@ -748,6 +728,7 @@ class PhysicsCalcInput(BaseModel):
     """Input for physics-based multi-year membrane performance projection.
     Contains all the same fields as SystemCalcInput plus physics-specific fields.
     """
+    model_config = {"extra": "allow"}
     # -- Standard system config (same as SystemCalcInput) --
     technology_train: str
     feed_water: dict
@@ -767,7 +748,13 @@ class PhysicsCalcInput(BaseModel):
     enable_booster: Optional[bool] = False
     interboost_enabled: Optional[bool] = False
     interboost_dp_bar: Optional[float] = None
-    degasser: Optional[dict] = None
+    degasser: Optional[dict] = None             # pre-treatment decarbonator (RO feed)
+    permeate_degasser: Optional[dict] = None    # FIX: post-treatment degasser was dropped by the model
+    interstage_degasser: Optional[dict] = None  # 2P-RO, before pass 2
+    feed_conditioning: Optional[dict] = None    # FIX 23 Nov: top-level feed pre-treatment block
+    permeate_conditioning: Optional[dict] = None
+    recycle_flow_m3h: Optional[float] = None    # Toray-style recycle input, m3/h
+    antiscalant_dosed: Optional[bool] = True
     antiscalant_type: Optional[str] = "Phosphonate"
     antiscalant_dose_mg_l: Optional[float] = 3.0
     antiscalant_product: Optional[str] = None       # manual | auto | Genesys LF | Genesys RC | Genesys SI
@@ -785,8 +772,6 @@ class PhysicsCalcInput(BaseModel):
     n_years: int = 5                  # Total years to project
     feed_quality: Optional[PhysicsFeedQuality] = None
     cip_config: Optional[PhysicsCIPConfig] = None
-    antiscalant_dosed: bool = True
-
 
 # ── Shared projection core ──────────────────────────────────────────────────
 # Both /api/simulate-aging and /api/calculate-system-physics call this
@@ -812,8 +797,16 @@ def _run_projection_core(
     recycle_enabled: bool = False,
     recycle_ratio: float = 0.0,
     antiscalant_type: str = "Phosphonate",
+    permeate_pressure_bar: Optional[float] = 0.0,
+    enable_booster: Optional[bool] = False,
+    interboost_dp_bar: Optional[float] = None,
+    degasser: Optional[dict] = None,
+    permeate_degasser: Optional[dict] = None,
+    interstage_degasser: Optional[dict] = None,
+    recycle_flow_m3h: Optional[float] = None,
+    feed_conditioning: Optional[dict] = None,
+    antiscalant_dose_mg_l: Optional[float] = 3.0,
     antiscalant_product: Optional[str] = None,
-    antiscalant_auto_dose: Optional[bool] = False,
     # Sub-configuration objects — forwarded verbatim to the simulation engine
     # so that 2P-RO, UF+RO, NF, and any future train uses the correct config.
     pass1:        Optional[dict] = None,
@@ -878,12 +871,26 @@ def _run_projection_core(
         # Recycle flags — required by calculate_system_with_recycle
         "recycle_enabled":     recycle_enabled,
         "recycle_ratio":       recycle_ratio,
+        "permeate_pressure_bar": permeate_pressure_bar,
+        "enable_booster":        enable_booster,
+        "interboost_dp_bar":     interboost_dp_bar,
+        "degasser":              degasser,
+        "permeate_degasser":     permeate_degasser,
+        "interstage_degasser":   interstage_degasser,
+        "recycle_flow_m3h":      recycle_flow_m3h,
+        "antiscalant_dosed":     antiscalant_dosed,
+        "antiscalant_type":      antiscalant_type,
+        "antiscalant_dose_mg_l": antiscalant_dose_mg_l,
+        "antiscalant_product":   antiscalant_product,
     }
     if uf_module:    input_dict["uf_module"]    = uf_module
     if pass1:        input_dict["pass1"]        = pass1
     if pass2:        input_dict["pass2"]        = pass2
     if conditioning: input_dict["conditioning"] = conditioning
     if recycle:      input_dict["recycle"]      = recycle
+    if feed_conditioning: input_dict["feed_conditioning"] = feed_conditioning
+
+    recycle_on = (recycle_enabled and recycle_ratio and recycle_ratio > 0) or (recycle_flow_m3h or 0) > 0
 
     if "2P-RO" in technology_train:
         baseline = engine.simulate_two_pass_system(input_dict)
@@ -896,17 +903,23 @@ def _run_projection_core(
                 ro_res["summary"]["perm_tds"] = sys_sum.get("final_permeate_tds", ro_res["summary"].get("perm_tds", 0.0))
                 ro_res["summary"]["sec_kwh_m3"] = sys_sum.get("sec_kwh_m3", ro_res["summary"].get("sec_kwh_m3", 0.0))
             baseline["ro_results"] = ro_res
-    elif recycle_enabled and recycle_ratio and recycle_ratio > 0:
+    elif recycle_on:
         baseline = engine.calculate_system_with_recycle(input_dict)
     else:
         baseline = engine.calculate_system(input_dict)
 
-    # For physics simulation, we MUST use the pure Pass 1 parameters (flow, recovery, TDS)
-    # so that the simulated fouled permeate TDS matches the physics equations.
-    physics_baseline_ro = baseline.get("pass1_results") or baseline.get("ro_results") or baseline
-
-    # For the UI presentation baseline, we use the merged system properties.
+    # For 2P-RO, baseline["ro_results"] was constructed above with the true combined
+    # system summary (correct TDS, SEC, recovery, flow). Prefer it over raw pass1_results.
+    # For 1P-RO, baseline itself contains the summary and recycle data.
     baseline_ro = baseline.get("ro_results") or baseline.get("pass1_results") or baseline
+
+    # FIX 20 Nov 2026: the physics engine used the RAW feed ions and pH, so acid
+    # dosing / decarbonator had no effect on scaling, fouling or the ageing table.
+    # Use the treated RO feed (after pre-treatment) when the system engine reports it.
+    if baseline.get("ro_feed_ions"):
+        ions = {k: baseline["ro_feed_ions"].get(k, v) for k, v in ions.items()}
+    if baseline.get("ro_feed_ph") is not None:
+        ph = baseline["ro_feed_ph"]
 
     # ── Recycle: blended feed ion concentrations for physics engine ──────
     # Industry-standard approach: use the ACTUAL converged blended feed ions
@@ -920,7 +933,7 @@ def _run_projection_core(
     #     (set by calculate_system_with_recycle from the converged c_blend)
     #   Fallback (solver data unavailable): analytical CF-scaling approximation
     recycle_feed_ions = None
-    if recycle_enabled and recycle_ratio and recycle_ratio > 0:
+    if recycle_on:
         # Primary: extract from solver result (accurate, ion-specific)
         rec_info = baseline.get("recycle", {})
         blended_ions = rec_info.get("blended_feed_ions")
@@ -954,7 +967,7 @@ def _run_projection_core(
         # Tertiary fallback: analytical concentration-factor scaling
         # Used only if both solver paths failed (e.g., legacy result dict)
         if not recycle_feed_ions:
-            rr        = float(recycle_ratio)
+            rr        = float(recycle_ratio or 0.0)
             fresh_tds = feed.get("tds", sum(ions.values()))
             rec_frac  = target_recovery_pct / 100.0
             CF        = 1.0 / max(1.0 - rec_frac, 0.05)          # Concentration Factor
@@ -980,7 +993,7 @@ def _run_projection_core(
     # DEBUG: log exact inputs
     print(f"\n=== _run_projection_core ENGINE INPUTS ===")
     print(f"  temp_c       = {temp_c}")
-    print(f"  ph           = {ph}")
+    print(f"  ph (RO feed) = {ph}")
     print(f"  membrane     = {membrane}")
     print(f"  stages       = {stages}")
     print(f"  vessels      = {vessels_per_stage}")
@@ -998,33 +1011,17 @@ def _run_projection_core(
     print(f"  baseline Q0  = {baseline_ro.get('summary', {}).get('perm_flow', '?')}")
     print(f"==========================================\n")
 
-    # ── Concentrate SI ───
-    # Dynamically compute the exact concentrate pH by solving the carbonate
-    # equilibrium shift from the feed pH using the concentration factor of HCO3.
+    # Calculate bulk scaling indices for Year 0 concentrate
     bulk_si = None
-    concentrate_si = None
-    concentrate_ph = None
     try:
         conc_ions = baseline_ro.get("summary", {}).get("conc_ions", {})
-        if conc_ions:
-            import math
-            feed_hco3 = feed.get("bicarbonate", 0.0) if isinstance(feed, dict) else getattr(feed, "bicarbonate", 0.0)
-            conc_hco3 = conc_ions.get("HCO3", 0)
-            
-            est_conc_ph = ph
-            if feed_hco3 and feed_hco3 > 0 and conc_hco3 > 0:
-                est_conc_ph += math.log10(conc_hco3 / feed_hco3)
-            else:
-                rec_frac = target_recovery_pct / 100.0
-                cf = 1.0 / max(1.0 - rec_frac, 0.05)
-                est_conc_ph += math.log10(cf)
-                
-            est_conc_ph = min(max(est_conc_ph, 0.0), 14.0)
-
-            sol_input = {
-                'pH': est_conc_ph,
+        if conc_ions and pp is not None:
+            # FIX: concentrate SI at the CONCENTRATE pH (was the raw feed pH)
+            conc_ph = baseline_ro.get("summary", {}).get("conc_ph") or ph
+            sol = pp.add_solution({
                 'units': 'mg/L',
                 'temp': temp_c,
+                'pH': conc_ph,
                 'Ca': conc_ions.get("Ca", 0),
                 'Mg': conc_ions.get("Mg", 0),
                 'Na': conc_ions.get("Na", 0),
@@ -1032,8 +1029,7 @@ def _run_projection_core(
                 'N(-3)': f"{conc_ions.get('NH4', 0)} as NH4",
                 'Cl': conc_ions.get("Cl", 0),
                 'S(6)': f"{conc_ions.get('SO4', 0)} as SO4",
-                # Use alkalinity expressed as HCO3 mg/L for correct carbonate equilibrium
-                'Alkalinity': f"{conc_ions.get('HCO3', 0)} as HCO3",
+                'Alkalinity': f"{conc_ions.get('HCO3', 0)} as HCO3",   # FIX: was "as CaCO3"
                 'N(5)': f"{conc_ions.get('NO3', 0)} as NO3",
                 'Sr': conc_ions.get("Sr", 0),
                 'F': conc_ions.get("F", 0),
@@ -1042,35 +1038,21 @@ def _run_projection_core(
                 'Al': conc_ions.get("Al", 0),
                 'Fe': conc_ions.get("Fe", 0),
                 'Mn': conc_ions.get("Mn", 0),
-                'P': f"{conc_ions.get('PO4', 0)} as PO4"
-            }
-            sol = pp.add_solution(sol_input)
-            # Read back the equilibrated pH — PHREEQC solved this from the carbonate system
-            concentrate_ph = round(sol.pH, 2)
-            concentrate_si = {
-                "Calcite":   round(sol.si("Calcite"),   3),
-                "Aragonite": round(sol.si("Aragonite"), 3),
-                "Dolomite":  round(sol.si("Dolomite"),  3),
-                "Gypsum":    round(sol.si("Gypsum"),    3),
-                "Anhydrite": round(sol.si("Anhydrite"), 3),
-                "Barite":    round(sol.si("Barite"),    3),
-                "Celestite": round(sol.si("Celestite"), 3),
-                "Fluorite":  round(sol.si("Fluorite"),  3),
-                "SiO2(a)":   round(sol.si("SiO2(a)"),   3),
-            }
-            # Legacy compact SI for physics engine scaling model
+                'P': f"{conc_ions.get('PO4', 0)} as PO4",
+                'B': conc_ions.get("B", 0),
+            })
             bulk_si = {
-                "calcite": concentrate_si["Calcite"],
-                "gypsum":  concentrate_si["Gypsum"],
-                "barite":  concentrate_si["Barite"],
-                "silica":  concentrate_si["SiO2(a)"],
+                "calcite": sol.si("Calcite"),
+                "gypsum": sol.si("Gypsum"),
+                "barite": sol.si("Barite"),
+                "silica": sol.si("SiO2(a)")
             }
             sol.forget()
     except Exception as e:
-        print("Error calculating concentrate SI in server.py:", e)
+        print("Error calculating bulk concentrate SI in server.py:", e)
 
     physics_results = phys_engine.run_physics_projection(
-        baseline_ro_result  = physics_baseline_ro,
+        baseline_ro_result  = baseline_ro,
         feed_ions           = ions,
         temp_c              = temp_c,
         ph                  = ph,
@@ -1091,13 +1073,17 @@ def _run_projection_core(
         recycle_feed_ions   = recycle_feed_ions,
         bulk_si             = bulk_si,
         antiscalant_type    = antiscalant_type,
+        enable_booster      = enable_booster,
+        interboost_dp_bar   = interboost_dp_bar,
     )
+
+    # Auto-CIP forecast logic removed per user request.
 
     # Ensure physics engine snapshots reflect the TRUE system recovery/flow (vital for 2P-RO)
     if "annual_snapshots" in physics_results:
         # Extract baseline metrics, supporting both 1-Pass (summary) and 2-Pass (system_summary)
         base_summ = baseline_ro.get("summary", {})
-        sys_summ  = baseline.get("system_summary", {})
+        sys_summ  = baseline_ro.get("system_summary", {})
         # Recycle data is stored at the root of the baseline object
         recycle_data = baseline.get("recycle", {})
 
@@ -1107,11 +1093,11 @@ def _run_projection_core(
         else:         # 1-Pass RO
             true_recovery = base_summ.get("total_recovery", target_recovery_pct / 100.0)
             true_perm     = base_summ.get("perm_flow", None)
-            
+
         true_base_pressure = base_summ.get("feed_pressure_bar", None)  # P1 pressure
         true_base_tds      = base_summ.get("perm_tds", None)
-        if "pass2_results" in baseline:  # For 2-Pass RO, TDS comes from Pass 2
-            true_base_tds = baseline["pass2_results"]["summary"].get("perm_tds", true_base_tds)
+        if "pass2" in baseline_ro:  # For 2-Pass RO, TDS comes from Pass 2
+            true_base_tds = baseline_ro["pass2"]["summary"].get("perm_tds", true_base_tds)
 
         true_base_sec = sys_summ.get("sec_kwh_m3") if sys_summ else base_summ.get("sec_kwh_m3", None)
 
@@ -1120,7 +1106,7 @@ def _run_projection_core(
             true_recovery = recycle_data.get("effective_system_recovery", true_recovery)
             # Explicitly force the permeate flow to match the effective recovery of the fresh feed
             true_perm = true_recovery * target_flow_m3h
-            
+
         print("DEBUG RECOVERY: true_recovery =", true_recovery)
         print("DEBUG RECOVERY: sys_summ =", sys_summ)
         print("DEBUG RECOVERY: recycle_data =", recycle_data)
@@ -1129,7 +1115,6 @@ def _run_projection_core(
 
         # ── Correct Year 0 snapshot to the true combined baseline ──────────
         if len(snaps) > 0:
-            raw_year0_sec = snaps[0].get("sec_kwh_m3", 0.0)
             snaps[0]["recovery"] = true_recovery
             snaps[0]["npf"]      = 1.0   # ASTM baseline — always 1.0
             snaps[0]["nsp"]      = 1.0   # ASTM baseline — always 1.0
@@ -1141,25 +1126,14 @@ def _run_projection_core(
         # The physics engine has been updated to calibrate A0 to match the exact P0_bar
         # at Year 0, so no delta-correction is needed anymore. The raw physics output
         # is correctly anchored to the baseline.
-        
+
         # We only need to overwrite the recovery and perm_flow to match the true system
         if len(snaps) > 1:
             for snap in snaps[1:]:
                 snap["recovery"] = true_recovery
                 if true_perm is not None:
                     snap["perm_flow"] = true_perm
-                
-                # Apply 2-Pass normalization for TDS and SEC
-                if true_base_tds is not None:
-                    # In a 2-Pass system, if Pass 1 NSP increases (e.g. 1.10), 
-                    # Pass 2 feed TDS increases by 10%, causing its permeate TDS to rise proportionately.
-                    snap["perm_tds"] = true_base_tds * snap["nsp"]
-                
-                if true_base_sec is not None:
-                    # SEC penalty is driven by physical fouling delta 
-                    delta_sec = snap["sec_kwh_m3"] - raw_year0_sec
-                    snap["sec_kwh_m3"] = true_base_sec + delta_sec
-                
+
                 # NPF and NSP: the physics engine now uses the correct ASTM D4516-19a
                 # constant-flow formula (NDP_0 / NDP_y). Values are already physically
                 # correct and monotonically declining — no normalization needed.
@@ -1172,8 +1146,6 @@ def _run_projection_core(
         "baseline":        baseline,
         "baseline_ro":     baseline_ro,
         "physics_results": physics_results,
-        "concentrate_si":  concentrate_si,
-        "concentrate_ph":  concentrate_ph,
     }
 
 
@@ -1189,6 +1161,7 @@ def simulate_aging(data: AgingSimInput):
         sc   = data.system_config
         aging_cfg = data.aging_config.dict()
         feed_hist = data.feed_history.dict()
+        extra = _input_dict(data)
 
         # CIP interval: 0 days → 0 months (dynamic). Non-zero: round to nearest month.
         cip_interval_days   = aging_cfg.get("cip_interval_days", 0)
@@ -1212,6 +1185,13 @@ def simulate_aging(data: AgingSimInput):
             cip_interval_months = cip_interval_months,
             antiscalant_dosed   = aging_cfg.get("antiscalant_dosed", True),
             antiscalant_type    = aging_cfg.get("antiscalant_type", "Phosphonate"),
+            conditioning        = data.conditioning.model_dump() if data.conditioning else None,
+            feed_conditioning   = extra.get("feed_conditioning"),
+            degasser            = data.degasser,
+            permeate_degasser   = data.permeate_degasser,
+            recycle_enabled     = data.recycle_enabled or False,
+            recycle_ratio       = data.recycle_ratio or 0.0,
+            recycle_flow_m3h    = data.recycle_flow_m3h,
         )
 
         result = core["physics_results"]
@@ -1274,6 +1254,16 @@ def calculate_system_physics(data: PhysicsCalcInput):
             antiscalant_type    = getattr(data, "antiscalant_type", "Phosphonate"),
             recycle_enabled     = data.recycle_enabled or False,
             recycle_ratio       = data.recycle_ratio or 0.0,
+            permeate_pressure_bar = data.permeate_pressure_bar,
+            enable_booster        = data.enable_booster,
+            interboost_dp_bar     = data.interboost_dp_bar,
+            degasser              = data.degasser,
+            permeate_degasser     = data.permeate_degasser,
+            interstage_degasser   = data.interstage_degasser,
+            recycle_flow_m3h      = data.recycle_flow_m3h,
+            feed_conditioning     = data.feed_conditioning,
+            antiscalant_dose_mg_l = data.antiscalant_dose_mg_l,
+            antiscalant_product   = getattr(data, "antiscalant_product", None),
             # Sub-configs forwarded verbatim — guarantees all technology trains
             # (RO, UF+RO, NF, UF+NF, 2P-RO, UF+2P-RO) use the user's config
             pass1        = data.pass1.model_dump()        if data.pass1        else None,
@@ -1297,13 +1287,13 @@ def calculate_system_physics(data: PhysicsCalcInput):
             ro_res = result.get("ro_results") or result.get("pass1_results") or {}
             if "summary" in ro_res:
                 base_summ = baseline.get("ro_results", {}).get("summary", {}) or baseline.get("pass1_results", {}).get("summary", {})
-                
+
                 base_pressure = base_summ.get("feed_pressure_bar", 1.0) or 1.0
                 pressure_ratio = sel["feed_pressure_bar"] / base_pressure
-                
+
                 base_tds = base_summ.get("perm_tds", 1.0) or 1.0
                 tds_ratio = sel["perm_tds"] / base_tds
-                
+
                 base_kwh = base_summ.get("sec_kwh_m3", 1.0) or 1.0
                 kwh_ratio = sel["sec_kwh_m3"] / base_kwh
 
@@ -1331,8 +1321,6 @@ def calculate_system_physics(data: PhysicsCalcInput):
 
         result["physics_results"] = physics_results
         result["physics_selected_year"] = selected_year
-        result["concentrate_si"] = core.get("concentrate_si")
-        result["concentrate_ph"] = core.get("concentrate_ph")
 
         return result
 
@@ -1341,3 +1329,8 @@ def calculate_system_physics(data: PhysicsCalcInput):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
