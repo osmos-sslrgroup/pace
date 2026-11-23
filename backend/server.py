@@ -532,7 +532,6 @@ def generate_calc_report(data: SystemCalcInput):
     """Generate and return a downloadable Word document (.docx) calculation report."""
     try:
         import tempfile, os
-        from docx2pdf import convert as docx2pdf_convert
 
         engine = SystemEngine()
         input_dict = _input_dict(data)
