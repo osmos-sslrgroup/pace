@@ -640,7 +640,7 @@ def generate_calc_report(data: SystemCalcInput):
         except Exception:
             pass
 
-        from fastapi.background import BackgroundTask
+        from starlette.background import BackgroundTask
         return FileResponse(
             path=tmp_pdf,
             filename="PACE_Calculation_Report.pdf",
