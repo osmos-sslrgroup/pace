@@ -2,6 +2,17 @@
 Report Generator for PACE Calculation Module
 Produces a multi-page WAVE-style .docx report with tables AND embedded charts.
 Reference layout: calc_module_ref_pics/RO_report_summary.pdf
+
+23 Nov 2026 - feed pre-treatment reporting
+  * Overview shows Feed pH (raw) AND RO feed pH after pre-treatment (and feed-to-pass pH
+    with recycle); the plain stream table gets a pH column and a "Treated feed" row.
+  * Ion table "Feed" column is the actual feed to the pass (treated + recycle blend), so
+    ions, TDS and rejection are on one basis (raw ions vs blend TDS before).
+  * Conductivity in "RO Chemical Adjustments" uses the same feed ions (was TDS incl. SiO2).
+  * Chemical dosing table shows the acid step (e.g. 7.20 -> 6.00) separately from the
+    degasser step (6.00 -> 7.30) instead of raw -> final.
+  * % saturation rows filled from the Genesys scaling analysis; antiscalant block added
+    (21 Nov change set, step 3, applied here).
 """
 
 import os
@@ -34,6 +45,15 @@ CHART_BRAND = "#4169E1"
 CHART_BLUE  = "#1565C0"
 CHART_ORANGE= "#E65100"
 CHART_GRAY  = "#607D8B"
+
+# Feed-water key map (feed_water dict -> ion symbol), shared by the report pages
+_FW_ION_MAP = {
+    'Na': 'sodium', 'Ca': 'calcium', 'Mg': 'magnesium', 'K': 'potassium',
+    'Cl': 'chloride', 'SO4': 'sulfate', 'HCO3': 'bicarbonate',
+    'Ba': 'barium', 'Sr': 'strontium', 'F': 'fluoride',
+    'SiO2': 'silica', 'B': 'boron', 'NO3': 'nitrate',
+    'PO4': 'phosphate', 'NH4': 'ammonium',
+}
 
 # ─── Matplotlib style ────────────────────────────────────────────────────────
 plt.rcParams.update({
@@ -168,6 +188,30 @@ def _hr(doc):
     bot.set(qn('w:val'), 'single'); bot.set(qn('w:sz'), '4')
     bot.set(qn('w:space'), '1'); bot.set(qn('w:color'), '7F7F7F')
     pBdr.append(bot); pPr.append(pBdr)
+
+
+def _fw_ions(fw):
+    """Ion dict (Na, Ca, ...) from a feed_water dict (sodium, calcium, ...)."""
+    return {ion: float(fw.get(key, 0.0) or 0.0) for ion, key in _FW_ION_MAP.items()}
+
+
+def _ions_tds(ions):
+    """TDS on the report basis: ionic salts + SiO2 (B and CO2 excluded)."""
+    return sum(v for k, v in (ions or {}).items() if k not in ('B', 'CO2') and isinstance(v, (int, float)))
+
+
+def _pass_feed_ions(sr):
+    """
+    Ions of the water actually fed to pass 1:
+      recycle run -> treated feed + recycle blend; otherwise -> treated RO feed;
+      fallback -> raw feed_water (no pre-treatment information).
+    """
+    rec = sr.get('recycle') or {}
+    if rec.get('enabled') and rec.get('blended_feed_ions'):
+        return dict(rec['blended_feed_ions'])
+    if sr.get('ro_feed_ions'):
+        return dict(sr['ro_feed_ions'])
+    return _fw_ions(sr.get('feed_water_used', {}))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -458,6 +502,12 @@ def _chart_opex_bar(opex, figsize=(4.0, 2.6)):
         vals.append(uf_chem)
         colors.append('#00BCD4')
 
+    ph_chem = opex.get('chemical_cost_pa_inr', 0)
+    if ph_chem > 0:
+        labels.append('pH Chemicals')
+        vals.append(ph_chem)
+        colors.append(CHART_GRAY)
+
     if sum(vals) <= 0:
         return None
 
@@ -504,7 +554,7 @@ def _add_header_block(doc, proj_name):
     tbl.autofit = True
     left = tbl.rows[0].cells[0]
     left.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-    
+
     # Try inserting logo, fallback to text
     logo_path = os.path.join(os.path.dirname(__file__), 'assets', 'permionics_logo.png')
     if os.path.exists(logo_path):
@@ -565,28 +615,28 @@ class ReportGenerator:
         """Render a process flow diagram chart from RO simulation results."""
         if not ro_results:
             return None
-        
+
         stages = ro_results.get('stages', [])
         if not stages:
             return None
-            
+
         summary = ro_results.get('summary', {})
         boosters = ro_results.get('booster_pumps', [])
-        
+
         # Parse vessel array
         vps = summary.get('vessels_per_stage', [4, 2])
         epv_l = normalize_elements_per_vessel(
             summary.get('elements_per_vessel', sr.get('elements_per_vessel', 6)), len(vps))
-        
+
         # Determine number of stages
         num_stages = len(vps)
         rEdge = 4.5 + num_stages * 3.0
-        
+
         fig, ax = plt.subplots(figsize=(6.5, 3.2), dpi=150)
         ax.axis('off')
         ax.set_xlim(-1, rEdge)
         ax.set_ylim(-2, 6)
-        
+
         # Helper to draw text
         def txt(x, y, s, color='#1e293b', size=7.5, weight='normal', ha='center', zorder=3):
             """Draw styled text onto the matplotlib axis."""
@@ -598,7 +648,7 @@ class ReportGenerator:
             """Draw a rounded rectangle onto the matplotlib axis."""
             p = FancyBboxPatch((x, y), w, h, boxstyle=f"round,pad=0,rounding_size={rx}", facecolor=fill, edgecolor=stroke, linewidth=1.2, zorder=zorder)
             ax.add_patch(p)
-            
+
         # Helper to draw lines
         def draw_line(x1, y1, x2, y2, color, lw=1.5, style='-', zorder=1):
             """Draw a straight line segment onto the matplotlib axis."""
@@ -607,19 +657,19 @@ class ReportGenerator:
         # Draw PFD Header background
         draw_rect(-0.8, 5.0, rEdge + 1.2, 0.8, '#f1f5f9', '#cbd5e1', rx=0.05, zorder=2)
         txt(-0.4 + rEdge/2, 5.4, 'Process Flow Diagram', color='#1e293b', size=10, weight='bold', zorder=3)
-        
+
         # Coordinate definitions
         N_ML = 1.0
         N_PP = 1.2
         N_VW = 1.4
         N_VH = 0.5
         N_VGY = 0.25
-        
+
         feedX = 0.2
         filtX = feedX + N_PP
         hpX = filtX + N_PP
         p1CY = 2.0
-        
+
         # 1. Feed Water
         # Draw feed water triangle pointing to the right
         feed_poly = Polygon([[feedX, p1CY - 0.4], [feedX, p1CY + 0.4], [feedX + 0.6, p1CY]], closed=True, facecolor='#eff6ff', edgecolor='#2563eb', linewidth=1.5, zorder=3)
@@ -628,7 +678,7 @@ class ReportGenerator:
         feed_flow = summary.get('feed_flow', 0)
         if feed_flow > 0:
             txt(feedX + 0.3, p1CY + 0.7, f"{feed_flow:.1f} m³/h", color='#2563eb', weight='bold', size=7.5, zorder=3)
-            
+
         # 2. Pre-Filter
         draw_rect(filtX, p1CY - 0.5, 0.5, 1.0, '#f8fafc', '#cbd5e1', rx=0.05, zorder=2)
         # filter lines
@@ -638,11 +688,11 @@ class ReportGenerator:
         filter_ellipse = Ellipse((filtX + 0.25, p1CY + 0.5), 0.5, 0.1, facecolor='#e2e8f0', edgecolor='#cbd5e1', linewidth=1.2, zorder=3)
         ax.add_patch(filter_ellipse)
         txt(filtX + 0.25, p1CY - 0.8, 'Pre-Filter', size=7, zorder=3)
-        
+
         # Connection Feed -> Filter -> Pump
         draw_line(feedX + 0.6, p1CY, filtX, p1CY, '#3b82f6', lw=2.0, zorder=1)
         draw_line(filtX + 0.5, p1CY, hpX, p1CY, '#3b82f6', lw=2.0, zorder=1)
-        
+
         # 3. HP Pump
         pump_circle = Circle((hpX + 0.3, p1CY), 0.35, facecolor='#eff6ff', edgecolor='#2563eb', linewidth=2.0, zorder=2)
         ax.add_patch(pump_circle)
@@ -652,51 +702,51 @@ class ReportGenerator:
         feed_press = summary.get('feed_pressure_bar', 0)
         if feed_press > 0:
             txt(hpX + 0.3, p1CY + 0.7, f"{feed_press:.1f} bar", color='#2563eb', weight='bold', size=7.5, zorder=3)
-            
+
         # Connection Pump -> Stage 1
         sx0 = hpX + 1.2
         draw_line(hpX + 0.65, p1CY, sx0, p1CY, '#3b82f6', lw=2.0, zorder=1)
-        
+
         # 4. RO Stages
         stage_x = []
         cur_x = sx0
         booster_map = {bp.get('from_stage'): bp for bp in boosters if bp.get('required')}
-        
+
         # Helper function to size block height
         def stH(n):
             """Calculate the vertical height of an n-vessel stage block."""
             return n * N_VH + (n - 1) * N_VGY
-            
+
         for si, nv in enumerate(vps):
             stage_x.append(cur_x)
             cur_x += N_VW + 1.2
             if booster_map.get(si + 1):
                 cur_x += 0.5 # Add space for booster pump
-                
+
         permY = -0.8
-        
+
         for si, nv in enumerate(vps):
             cx = stage_x[si]
             n_el = epv_l[si]
             sH = stH(nv)
             topY = p1CY - sH / 2
-            
+
             # Stage Header Label
             draw_rect(cx + N_VW/2 - 0.6, topY + sH + 0.4, 1.2, 0.35, '#2563eb', '#2563eb', rx=0.03, zorder=3)
             txt(cx + N_VW/2, topY + sH + 0.55, f"Stage {si+1}", color='#ffffff', weight='bold', size=7, zorder=4)
-            
+
             # Stage recovery metrics
             stage_data = stages[si] if si < len(stages) else {}
             rec_pct = stage_data.get('recovery', 0) * 100
             draw_rect(cx + N_VW/2 - 0.7, topY + sH + 0.02, 1.4, 0.35, '#f8fafc', '#cbd5e1', rx=0.03, zorder=3)
             txt(cx + N_VW/2, topY + sH + 0.17, f"Rec: {rec_pct:.1f}%", color='#475569', size=6.5, zorder=4)
-            
+
             # Draw vertical manifolds
             # Feed manifold (left)
             draw_line(cx - 0.1, topY, cx - 0.1, topY + sH - N_VH/2, '#3b82f6', lw=3.5, zorder=2)
             # Concentrate manifold (right)
             draw_line(cx + N_VW + 0.1, topY, cx + N_VW + 0.1, topY + sH - N_VH/2, '#ef4444', lw=3.5, zorder=2)
-            
+
             # Draw vessels
             for vi in range(nv):
                 vy = topY + vi * (N_VH + N_VGY)
@@ -705,39 +755,39 @@ class ReportGenerator:
                 # vessel stubs
                 draw_line(cx - 0.1, vy + N_VH/2, cx, vy + N_VH/2, '#3b82f6', lw=1.2, zorder=2)
                 draw_line(cx + N_VW, vy + N_VH/2, cx + N_VW + 0.1, vy + N_VH/2, '#ef4444', lw=1.2, zorder=2)
-                
+
                 # Element dividers inside vessel
                 ew = (N_VW - 0.15) / n_el
                 for ei in range(n_el - 1):
                     draw_line(cx + 0.075 + ew*(ei+1), vy + 0.05, cx + 0.075 + ew*(ei+1), vy + N_VH - 0.05, '#bfdbfe', lw=0.8, style='--', zorder=3)
-                    
+
                 # vessel text
                 txt(cx + N_VW/2, vy + N_VH/2, f"{si+1}-{vi+1}", color='#1e293b', size=6.5, zorder=3)
-                
+
                 # permeate line down (low zorder=1 to pass UNDER lower vessels)
                 draw_line(cx + N_VW/2, vy, cx + N_VW/2, permY, '#10b981', lw=1.0, style='--', zorder=1)
-                
+
             # Connect input line to feed manifold
             draw_line(cx - 0.5, p1CY, cx - 0.1, p1CY, '#3b82f6', lw=2.0, zorder=1)
-            
+
             # Connect concentrate manifold to next stage or output
             if si < len(vps) - 1:
                 next_cx = stage_x[si+1]
                 from_x = cx + N_VW + 0.1
                 to_x = next_cx - 0.5
-                
+
                 bp = booster_map.get(si + 1)
                 if bp:
                     mid_x = (from_x + to_x) / 2
                     draw_line(from_x, p1CY, mid_x - 0.25, p1CY, '#ef4444', lw=2.0, zorder=1)
                     draw_line(mid_x + 0.25, p1CY, to_x, p1CY, '#3b82f6', lw=2.0, zorder=1)
-                    
+
                     # Booster pump circle
                     bp_circle = Circle((mid_x, p1CY), 0.28, facecolor='#fffbeb', edgecolor='#d97706', linewidth=1.5, zorder=2)
                     ax.add_patch(bp_circle)
                     bp_tri = Polygon([[mid_x - 0.1, p1CY - 0.15], [mid_x - 0.1, p1CY + 0.15], [mid_x + 0.12, p1CY]], closed=True, facecolor='#d97706', zorder=3)
                     ax.add_patch(bp_tri)
-                    
+
                     txt(mid_x, p1CY - 0.55, 'Booster', weight='bold', size=6, zorder=3)
                     txt(mid_x, p1CY + 0.45, f"+{bp.get('boost_dp_bar', 0):.1f} bar", color='#d97706', weight='bold', size=6, zorder=3)
                 else:
@@ -757,15 +807,15 @@ class ReportGenerator:
         p1PermLx = stage_x[0] + N_VW/2
         p1PermRx = stage_x[-1] + N_VW/2
         tank_x = p1PermRx + 1.8
-        
+
         draw_line(p1PermLx, permY, tank_x - 0.3, permY, '#10b981', lw=3.0, zorder=1)
         ax.annotate('', xy=(tank_x - 0.3, permY), xytext=(tank_x - 0.7, permY), arrowprops=dict(arrowstyle="->", color='#10b981', lw=3.0), zorder=3)
         txt(p1PermRx + 0.6, permY - 0.4, 'Permeate Stream', color='#10b981', weight='bold', size=7, zorder=3)
-        
+
         perm_flow = summary.get('perm_flow', 0)
         if perm_flow > 0:
             txt(p1PermRx + 0.6, permY + 0.3, f"{perm_flow:.1f} m³/h", color='#10b981', weight='bold', size=7.5, zorder=3)
-            
+
         # 6. Permeate Tank (draw cylindrical tank with body and top/bottom ellipses)
         draw_rect(tank_x - 0.3, permY - 0.5, 0.6, 0.8, '#ecfdf5', '#10b981', rx=0.02, zorder=2)
         top_ellipse = Ellipse((tank_x, permY + 0.3), 0.6, 0.12, facecolor='#d1fae5', edgecolor='#10b981', linewidth=1.2, zorder=3)
@@ -773,7 +823,7 @@ class ReportGenerator:
         bot_ellipse = Ellipse((tank_x, permY - 0.5), 0.6, 0.12, facecolor='#d1fae5', edgecolor='#10b981', linewidth=1.5, zorder=3)
         ax.add_patch(bot_ellipse)
         txt(tank_x, permY - 0.8, 'Product Tank', color='#047857', weight='bold', size=6.5, zorder=3)
-        
+
         return _chart_bytes(fig)
 
     def _setup_doc(self):
@@ -800,7 +850,7 @@ class ReportGenerator:
             drawing = svg2rlg(temp_name)
             buf = io.BytesIO()
             # Scaling up for better resolution in report
-            drawing.renderScale = 2.0 
+            drawing.renderScale = 2.0
             renderPM.drawToFile(drawing, buf, fmt="PNG", dpi=300)
             os.remove(temp_name)
             buf.seek(0)
@@ -818,7 +868,7 @@ class ReportGenerator:
 
         overview = uf_results.get('overview', {})
         op_cond = uf_results.get('operating_conditions', {})
-        
+
         ud = sr.get('units', {})
         flow_lbl = lbl_flow(ud)
         press_lbl = lbl_press(ud)
@@ -837,7 +887,7 @@ class ReportGenerator:
             ('Backwash Duration',           f"{op_cond.get('backwash_duration_min', 0):.1f} min"),
         ], widths=(7.5, 6.5))
         _spacer(doc)
-        
+
         doc.add_page_break()
 
     def _page_system_overview(self, doc, sr):
@@ -850,10 +900,10 @@ class ReportGenerator:
         # ── Project Information Table ──
         if pd:
             _heading(doc, 'Project Information', size=11)
-            
+
             # Combine names if present
             full_name = f"{pd.get('firstName', '')} {pd.get('lastName', '')}".strip()
-            
+
             pd_rows = [
                 ['Project Name', proj_name],
                 ['Prepared By', full_name or '—'],
@@ -863,7 +913,7 @@ class ReportGenerator:
                 ['Mobile', pd.get('mobile') or '—'],
                 ['Address', f"{pd.get('street', '')}, {pd.get('city', '')}, {pd.get('country', '')}".strip(", ") or '—'],
             ]
-            
+
             _prop_table(doc, pd_rows)
             _spacer(doc)
 
@@ -882,7 +932,7 @@ class ReportGenerator:
                 print(f"PNG Decode error: {e}")
         elif sr.get('pfd_svg'):
             pfd_buf = self._render_pfd_svg(sr.get('pfd_svg'))
-        
+
         if not pfd_buf:
             ro_main = sr.get('pass1_results') or sr.get('ro_results')
             pfd_buf = self._chart_pfd_diagram(ro_main, sr)
@@ -913,6 +963,14 @@ class ReportGenerator:
         press_lbl = lbl_press(ud)
         flux_lbl = lbl_flux(ud)
 
+        fw = sr.get('feed_water_used', {})
+        pre = sr.get('feed_conditioning') or {}
+        raw_ph = pre.get('ph_in', fw.get('ph'))
+        treated_ph = pre.get('ph_out') if pre else None
+
+        def _phs(v):
+            return f"{v:.2f}" if isinstance(v, (int, float)) else '—'
+
         _heading(doc, 'RO Flow Table (Stream Level)')
         rec_streams = (sr.get('recycle') or {}).get('streams')
         if rec_streams:
@@ -935,17 +993,28 @@ class ReportGenerator:
                     f"Mass balance error {rc.get('mass_balance_error_pct', 0):.2f} %", size=8, italic=True)
             _spacer(doc)
         else:
-          _data_table(doc,
-            [['#', 'Description', f'Flow ({flow_lbl})', 'TDS (mg/L)', f'Pressure ({press_lbl})']],
-            [
-                ['1', 'Raw Feed to RO System',           f"{conv_flow(sr.get('target_flow_m3h', sm.get('feed_flow', 0)), ud):.1f}",  f"{sm.get('feed_tds', 0):.1f}", '0.0'],
-                ['2', 'Net Feed to Pass 1',               f"{conv_flow(sm.get('feed_flow', 0), ud):.1f}",  f"{sm.get('feed_tds', 0):.1f}", f"{conv_press(sm.get('feed_pressure_bar', 0), ud):.1f}"],
-                ['4', 'Total Concentrate from Pass 1',    f"{conv_flow(sm.get('conc_flow', 0), ud):.1f}",  f"{sm.get('conc_tds', 0):.0f}", f"{conv_press(sm.get('conc_pressure_bar', 0), ud):.1f}"],
-                ['6', 'Net Product from RO System',       f"{conv_flow(sm.get('perm_flow', 0), ud):.1f}",  f"{sm.get('perm_tds', 0):.2f}", '0.0'],
-            ],
-            col_widths=[0.7, 6.5, 2.5, 2.5, 2.2]
-          )
-          _spacer(doc)
+            # FIX 23 Nov 2026: pH column, raw TDS for the raw feed and a treated-feed row
+            raw_tds = _ions_tds(_fw_ions(fw))
+            rows = [['1', 'Raw Feed to RO System',
+                     f"{conv_flow(sr.get('target_flow_m3h', sm.get('feed_flow', 0)), ud):.1f}",
+                     f"{raw_tds:.1f}", '0.0', _phs(raw_ph)]]
+            if pre:
+                rows.append(['2', 'Treated Feed (after pre-treatment)', f"{conv_flow(sm.get('feed_flow', 0), ud):.1f}",
+                             f"{sm.get('feed_tds', 0):.1f}", '0.0', _phs(treated_ph)])
+            rows += [
+                ['3', 'Net Feed to Pass 1', f"{conv_flow(sm.get('feed_flow', 0), ud):.1f}",
+                 f"{sm.get('feed_tds', 0):.1f}", f"{conv_press(sm.get('feed_pressure_bar', 0), ud):.1f}",
+                 _phs(sm.get('feed_ph', treated_ph if pre else raw_ph))],
+                ['4', 'Total Concentrate from Pass 1', f"{conv_flow(sm.get('conc_flow', 0), ud):.1f}",
+                 f"{sm.get('conc_tds', 0):.0f}", f"{conv_press(sm.get('conc_pressure_bar', 0), ud):.1f}",
+                 _phs(sm.get('conc_ph'))],
+                ['6', 'Net Product from RO System', f"{conv_flow(sm.get('perm_flow', 0), ud):.1f}",
+                 f"{sm.get('perm_tds', 0):.2f}", '0.0', _phs(sm.get('product_ph'))],
+            ]
+            _data_table(doc,
+                [['#', 'Description', f'Flow ({flow_lbl})', 'TDS (mg/L)', f'Pressure ({press_lbl})', 'pH']],
+                rows, col_widths=[0.7, 6.0, 2.2, 2.2, 2.0, 1.3])
+            _spacer(doc)
 
         # ── System overview table ──
         vps  = sm.get('vessels_per_stage', [1])
@@ -967,6 +1036,14 @@ class ReportGenerator:
                 _set_cell_border(c, **_thin())
         _spacer(doc, 4)
 
+        # pH rows (FIX 23 Nov 2026): raw feed, RO feed after pre-treatment, feed to pass
+        ph_rows = [('Feed pH (raw water)', _phs(raw_ph))]
+        if pre:
+            ph_rows.append(('RO Feed pH (after pre-treatment)', _phs(treated_ph)))
+        if (sr.get('recycle') or {}).get('enabled') and sm.get('feed_ph') is not None:
+            ph_rows.append(('Feed pH to Pass (with recycle)', _phs(sm.get('feed_ph'))))
+        ph_rows.append(('Product pH', _phs(sm.get('product_ph'))))
+
         # Detail property table
         _prop_table(doc, [
             ('Pass',                       'Pass 1'),
@@ -987,10 +1064,8 @@ class ReportGenerator:
             ('Booster Pump Power',         f"{sm.get('booster_pump_power_kw', 0):.2f} kW"),
             ('Total Power',                f"{sm.get('total_power_kw', 0):.2f} kW"),
             ('Specific Energy Consumption',f"{sm.get('sec_kwh_m3', 0):.3f} kWh/m³"),
-            ('Temperature',                f"{sr.get('feed_water_used', {}).get('temperature', 25):.1f} °C"),
-            ('Feed pH',                    f"{sr.get('feed_water_used', {}).get('ph', 7):.1f}"),
-            ('Product pH',                 f"{sm['product_ph']:.2f}" if sm.get('product_ph') is not None else '—'),
-        ], widths=(7.5, 6.5))
+            ('Temperature',                f"{fw.get('temperature', 25):.1f} °C"),
+        ] + ph_rows, widths=(7.5, 6.5))
 
         self._footnote(doc)
 
@@ -1002,7 +1077,7 @@ class ReportGenerator:
         stages   = ro.get('stages', [])
         elements = ro.get('elements', [])
         vps      = sm.get('vessels_per_stage', [1])
-        
+
         ud = sr.get('units', {})
         flow_lbl = lbl_flow(ud)
         press_lbl = lbl_press(ud)
@@ -1067,9 +1142,9 @@ class ReportGenerator:
         _spacer(doc, 4)
 
         # (Stage Flow Bar Chart Removed as it's obvious from the table)
-        
+
         _heading(doc, 'Hydraulic Performance & Visualization')
-        
+
         # We need to scale chart arrays explicitly:
         flux_scaled = [conv_flux(e.get('flux', 0), ud) for e in elements]
         ndp_scaled = [conv_press(e.get('ndp', 0), ud) for e in elements]
@@ -1082,36 +1157,32 @@ class ReportGenerator:
         buf_beta  = _chart_element_profile(elements, 'Concentration Polarization (β)', 'beta', 'β (–)', CHART_BLUE)
         _insert_two_charts(doc, buf_press, buf_beta, width_in=3.1)
         _spacer(doc, 4)
-        
+
         # (TDS Profile Chart Removed as it's obvious from the table)
     # ── Page 3: Ion analysis ──────────────────────────────────────────────
 
-    def _page_ion_analysis(self, doc, ro: dict, fw: dict):
-        """Generate ion concentration table comparing feed, concentrate, permeate, and rejection."""
+    def _page_ion_analysis(self, doc, ro: dict, fw: dict, feed_ions: dict = None):
+        """
+        Ion table: Feed to pass | Concentrate | Permeate | Rejection.
+        FIX 23 Nov 2026: the Feed column is the water actually fed to the pass (after
+        pre-treatment, and blended with the recycle) - before, raw ions were shown next to
+        the blend TDS, and rejection mixed the two bases.
+        """
         _heading(doc, 'RO Solute Concentrations & Rejection Analysis', size=16)
         sm        = ro.get('summary', {})
         perm_ions = sm.get('perm_ions', {})
         conc_ions = sm.get('conc_ions', {})
+        feed_ions = feed_ions or _fw_ions(fw)
 
         # Ion table
         _heading(doc, 'Ion Concentration Table – Feed | Concentrate | Permeate | Rejection')
-        ion_map = {
-            'Na': 'sodium', 'Ca': 'calcium', 'Mg': 'magnesium', 'K': 'potassium',
-            'Cl': 'chloride', 'SO4': 'sulfate', 'HCO3': 'bicarbonate',
-            'Ba': 'barium', 'Sr': 'strontium', 'F': 'fluoride',
-            'SiO2': 'silica', 'B': 'boron', 'NO3': 'nitrate',
-            'PO4': 'phosphate', 'NH4': 'ammonium',
-        }
         ion_rows = []
-        active_ions = {}
-        for ion, key in ion_map.items():
-            fc = fw.get(key, 0.0)
+        for ion in _FW_ION_MAP:
+            fc = float(feed_ions.get(ion, 0.0) or 0.0)
             pc = perm_ions.get(ion, 0.0)
             cc = conc_ions.get(ion, 0.0)
             rej = (1 - pc / fc) * 100 if fc > 0 else 100.0
             ion_rows.append([ion, f'{fc:.2f}', f'{cc:.2f}', f'{pc:.4f}', f'{rej:.2f} %'])
-            if fc > 0:
-                active_ions[ion] = {'feed': fc, 'perm': pc}
 
         feed_tds = sm.get('feed_tds', 0)
         perm_tds = sm.get('perm_tds', 0)
@@ -1119,18 +1190,23 @@ class ReportGenerator:
         rej_tds  = (1 - perm_tds / feed_tds) * 100 if feed_tds > 0 else 100.0
 
         # Conductivity is calculated from dissolved ionic salts only (excluding neutral SiO2 and B)
-        feed_ionic = sum(fw.get(key, 0.0) for ion, key in ion_map.items() if ion not in ('SiO2', 'B'))
-        conc_ionic = sum(conc_ions.get(ion, 0.0) for ion in ion_map.keys() if ion not in ('SiO2', 'B'))
-        perm_ionic = sum(perm_ions.get(ion, 0.0) for ion in ion_map.keys() if ion not in ('SiO2', 'B'))
+        feed_ionic = sum(float(feed_ions.get(ion, 0.0) or 0.0) for ion in _FW_ION_MAP if ion not in ('SiO2', 'B'))
+        conc_ionic = sum(conc_ions.get(ion, 0.0) for ion in _FW_ION_MAP if ion not in ('SiO2', 'B'))
+        perm_ionic = sum(perm_ions.get(ion, 0.0) for ion in _FW_ION_MAP if ion not in ('SiO2', 'B'))
 
         ion_rows.append(['TDS* (mg/L)',      f'{feed_tds:.1f}', f'{conc_tds:.1f}',  f'{perm_tds:.2f}',   f'{rej_tds:.2f} %'])
         ion_rows.append(['Conductivity (µS/cm)', f'{feed_ionic*2.02:.0f}', f'{conc_ionic*2.02:.0f}', f'{perm_ionic*2.02:.1f}', '—'])
 
         _data_table(doc,
-            [['Ion Species', 'Feed (mg/L)', 'Concentrate (mg/L)', 'Permeate (mg/L)', 'Rejection (%)']],
+            [['Ion Species', 'Feed to Pass (mg/L)', 'Concentrate (mg/L)', 'Permeate (mg/L)', 'Rejection (%)']],
             ion_rows,
             col_widths=[3.0, 2.8, 3.2, 3.0, 2.8]
         )
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(2)
+        _run(p, 'Feed to Pass = RO feed after pre-treatment (acid dosing / degasser)'
+                + (', blended with the concentrate recycle.' if sm.get('recycle_flow') else '.'),
+             size=8, italic=True)
         _spacer(doc, 8)
         self._footnote(doc)
         _spacer(doc, 4)
@@ -1204,8 +1280,14 @@ class ReportGenerator:
             kg_d = dose * flow * 24.0 / 1000.0
             total_kg_d += kg_d
             chem = info.get('chemical') or '—'
+            # FIX 23 Nov 2026: pH reached by the CHEMICAL step. Acid is dosed before the
+            # degasser, so the acid outlet pH is the degasser inlet pH (e.g. 7.20 -> 6.00);
+            # ph_out is after the degasser (6.00 -> 7.30).
+            ph_after_dose = info.get('ph_out')
+            if chem in ('HCl', 'H2SO4') and info.get('degasser_applied') and info.get('degasser_ph_in') is not None:
+                ph_after_dose = info.get('degasser_ph_in')
             chem_rows.append([name, self._CHEM_NAMES.get(chem, chem),
-                              f"{self._f(info.get('ph_in'))} → {self._f(info.get('ph_out'))}",
+                              f"{self._f(info.get('ph_in'))} → {self._f(ph_after_dose)}",
                               f"{dose:.2f}", f"{conv_flow(flow, ud):.2f}", f"{kg_d:.2f}"])
         if chem_rows:
             _data_table(doc,
@@ -1256,6 +1338,10 @@ class ReportGenerator:
         rows = [['Raw feed', self._f(raw_ph), self._f(fw.get('bicarbonate'), "{:.1f}"), self._f(raw_co2, "{:.1f}")]]
         if pre:
             treated = rec.get('treated_feed_ions') or ro_feed_ions
+            if pre.get('dose_mg_l') and pre.get('degasser_applied') and pre.get('chemical') in ('HCl', 'H2SO4'):
+                # acid step and degasser step shown separately
+                rows.append([f"After {pre.get('chemical')} dosing (degasser inlet)", self._f(pre.get('degasser_ph_in')),
+                             self._f(treated.get('HCO3'), "{:.1f}"), self._f(pre.get('degasser_co2_in_mg_l'), "{:.1f}")])
             rows.append(['Treated feed (after pre-treatment)', self._f(pre.get('ph_out')),
                          self._f(treated.get('HCO3'), "{:.1f}"), self._f(pre.get('co2_out_mg_l'), "{:.1f}")])
         if rec.get('enabled'):
@@ -1382,21 +1468,21 @@ class ReportGenerator:
                     risk = 'MODERATE'; rec = lim['rec_mod']
                 elif si_val > lim['mod'] - 0.2:
                     risk = 'LOW';      rec = 'Monitor. No immediate action required.'
-                
+
                 f_si_val = feed_si.get(mineral)
-                
+
                 if si_val <= -99:
                     risk = 'NONE'
                     rec = 'Constituent ions not present.'
                     si_str = '—'
                 else:
                     si_str = f'{si_val:+.3f}'
-                    
+
                 if f_si_val is not None and f_si_val > -99:
                     f_si_str = f'{f_si_val:+.3f}'
                 else:
                     f_si_str = '—'
-                    
+
                 si_rows.append([mineral, lim['formula'], f_si_str, si_str, risk, rec])
             if conc_ph is not None:
                 # Add Feed pH if available
@@ -1424,18 +1510,20 @@ class ReportGenerator:
             sol_rows = []
             try:
                 scaling = _compute_nf_concentrate_scaling(conc_ions, feed_ph, temp_c)
+                # FIX 23 Nov 2026: the value is shown with each warning (pH / acid effect visible)
+                v = lambda k, f: scaling.get(k, {}).get(f)
                 if scaling.get('CaCO3_calcite', {}).get('antiscalant_required'):
-                    sol_rows.append(['Calcite saturation exceeded (LSI > 0) - Risk of carbonate scaling.', 'Acid dosing or anti-scalant required.'])
+                    sol_rows.append([f"Calcite saturation exceeded (LSI {v('CaCO3_calcite', 'LSI'):+.2f} at concentrate pH {feed_ph:.2f}) - Risk of carbonate scaling.", 'Acid dosing or anti-scalant required.'])
                 if scaling.get('CaSO4_gypsum', {}).get('antiscalant_required'):
-                    sol_rows.append(['Gypsum saturation exceeded (SI > 0) - Risk of calcium sulfate scaling.', 'Verify anti-scalant efficacy.'])
+                    sol_rows.append([f"Gypsum saturation exceeded (SI {v('CaSO4_gypsum', 'SI'):+.2f}) - Risk of calcium sulfate scaling.", 'Verify anti-scalant efficacy.'])
                 if scaling.get('BaSO4_barite', {}).get('antiscalant_required'):
-                    sol_rows.append(['Barite saturation exceeded (SI > 0) - High risk of barium sulfate scaling.', 'Specialized anti-scalant required.'])
+                    sol_rows.append([f"Barite saturation exceeded (SI {v('BaSO4_barite', 'SI'):+.2f}) - High risk of barium sulfate scaling.", 'Specialized anti-scalant required.'])
                 if scaling.get('SrSO4_celestite', {}).get('antiscalant_required'):
-                    sol_rows.append(['Celestite saturation exceeded (SI > 0) - Risk of strontium scaling.', 'Use specialized anti-scalant.'])
+                    sol_rows.append([f"Celestite saturation exceeded (SI {v('SrSO4_celestite', 'SI'):+.2f}) - Risk of strontium scaling.", 'Use specialized anti-scalant.'])
                 if scaling.get('CaF2_fluorite', {}).get('antiscalant_required'):
-                    sol_rows.append(['Fluorite saturation exceeded (SI > 0) - Risk of calcium fluoride scaling.', 'Use specialized anti-scalant.'])
+                    sol_rows.append([f"Fluorite saturation exceeded (SI {v('CaF2_fluorite', 'SI'):+.2f}) - Risk of calcium fluoride scaling.", 'Use specialized anti-scalant.'])
                 if scaling.get('SiO2', {}).get('antiscalant_required'):
-                    sol_rows.append(['Amorphous Silica saturation > 80% - Risk of silica polymerization.', 'Consider pH adjustment or silica-specific anti-scalant.'])
+                    sol_rows.append([f"Amorphous Silica saturation {v('SiO2', 'sat_pct'):.0f} % (> 80 %) - Risk of silica polymerization.", 'Consider pH adjustment or silica-specific anti-scalant.'])
             except Exception:
                 pass
             if not sol_rows:
@@ -1450,6 +1538,14 @@ class ReportGenerator:
         conc_ions = sm.get('conc_ions', {})
         feed_ionic = sum(v for k, v in feed_ions.items() if k not in ('SiO2', 'B', 'CO2')) if feed_ions else max(0.0, sm.get('feed_tds', 0) - feed_ions.get('SiO2', 0))
         conc_ionic = sum(v for k, v in conc_ions.items() if k not in ('SiO2', 'B', 'CO2')) if conc_ions else max(0.0, sm.get('conc_tds', 0) - conc_ions.get('SiO2', 0))
+
+        # % saturation from the Genesys scaling analysis (21 Nov change set, step 3b)
+        _sa = ro_results.get('scaling_analysis') or {}
+        _up = _sa.get('untreated_pct') or {}
+        def _sat(sp, where):
+            val = (_up.get(where) or {}).get(sp)
+            return f"{val:.1f}" if isinstance(val, (int, float)) else '—'
+
         _data_table(doc,
             [['Parameter', 'Pass 1 Feed', 'RO 1st Pass Conc.']],
             [
@@ -1459,13 +1555,29 @@ class ReportGenerator:
                                                 f"{sm['feed_co2_mg_l']:.1f}" if sm.get('feed_co2_mg_l') is not None else '—'],
                 ['TDS* (mg/L)',                 f"{sm.get('feed_tds', 0):.1f}", f"{sm.get('conc_tds', 0):.0f}"],
                 ['Conductivity (µS/cm)',        f"{feed_ionic*2.02:.0f}", f"{conc_ionic*2.02:.0f}"],
-                ['CaSO₄ (% saturation)',        '—', '—'],
-                ['BaSO₄ (% saturation)',        '—', '—'],
-                ['SrSO₄ (% saturation)',        '—', '—'],
-                ['SiO₂ (% saturation)',         '—', '—'],
+                ['CaSO₄ (% saturation)',        _sat('CaSO4', 'feed'), _sat('CaSO4', 'concentrate')],
+                ['BaSO₄ (% saturation)',        _sat('BaSO4', 'feed'), _sat('BaSO4', 'concentrate')],
+                ['SrSO₄ (% saturation)',        _sat('SrSO4', 'feed'), _sat('SrSO4', 'concentrate')],
+                ['SiO₂ (% saturation)',         _sat('SiO2', 'feed'),  _sat('SiO2', 'concentrate')],
             ],
             col_widths=[7.0, 3.0, 4.5]
         )
+
+        # Antiscalant summary (21 Nov change set, step 3b)
+        _sel = _sa.get('selected')
+        if _sel:
+            _spacer(doc, 6)
+            _heading(doc, f"Antiscalant – {_sel['product']} (Genesys basis)")
+            _d = _sel['dose']
+            _tp = _sel['treated_pct']['concentrate']
+            _data_table(doc, [['Item', 'Value']], [
+                ['Recommended product', (_sa.get('recommendation') or {}).get('product', '—')],
+                ['Feed dose (scale + iron)', f"{_d['total_feed_dose_mg_l']:.2f} mg/L ({_d['scale_dose_mg_l']:.2f} + {_d['iron_dose_mg_l']:.2f})"],
+                ['Level in concentrate', f"{_d['concentrate_level_mg_l']:.2f} mg/L"],
+                ['Consumption', f"{_d['kg_per_day']:.2f} kg/day"],
+                ['Highest treated % of max', f"{_d['limiting_species']} {_d['max_treated_pct']:.1f} %"],
+            ] + [[f"{k} (% of max, treated)", f"{val:.1f}"] for k, val in _tp.items() if val > 0],
+            col_widths=[7.5, 7.0])
 
     # ── Page 6: Economics ────────────────────────────────────────────────────
 
@@ -1635,9 +1747,9 @@ class ReportGenerator:
                  f"{sel.get('feed_pressure_bar', 0):.2f} bar",
                  f"{sel.get('feed_pressure_bar', 0) - base.get('feed_pressure_bar', 0):+.2f} bar"],
                 ['Permeate Flow',
-                 f"{base.get('perm_flow', 0):.2f} m\u00b3/h",
-                 f"{sel.get('perm_flow', 0):.2f} m\u00b3/h",
-                 f"{sel.get('perm_flow', 0) - base.get('perm_flow', 0):+.2f} m\u00b3/h"],
+                 f"{base.get('perm_flow', 0):.2f} m³/h",
+                 f"{sel.get('perm_flow', 0):.2f} m³/h",
+                 f"{sel.get('perm_flow', 0) - base.get('perm_flow', 0):+.2f} m³/h"],
                 ['Recovery',
                  f"{base.get('recovery', 0)*100:.1f}%",
                  f"{sel.get('recovery', 0)*100:.1f}%",
@@ -1647,9 +1759,9 @@ class ReportGenerator:
                  f"{sel.get('perm_tds', 0):.1f} mg/L",
                  f"{sel.get('perm_tds', 0) - base.get('perm_tds', 0):+.1f} mg/L"],
                 ['SEC',
-                 f"{base.get('sec_kwh_m3', 0):.3f} kWh/m\u00b3",
-                 f"{sel.get('sec_kwh_m3', 0):.3f} kWh/m\u00b3",
-                 f"{sel.get('sec_kwh_m3', 0) - base.get('sec_kwh_m3', 0):+.3f} kWh/m\u00b3"],
+                 f"{base.get('sec_kwh_m3', 0):.3f} kWh/m³",
+                 f"{sel.get('sec_kwh_m3', 0):.3f} kWh/m³",
+                 f"{sel.get('sec_kwh_m3', 0) - base.get('sec_kwh_m3', 0):+.3f} kWh/m³"],
                 ['NPF (Norm. Permeate Flow)',
                  f"{base.get('npf', 1.0):.3f}",
                  f"{sel.get('npf', 1.0):.3f}",
@@ -1691,8 +1803,8 @@ class ReportGenerator:
                 repl_flag,
             ])
         _data_table(doc,
-            [['Year', 'Qp\n(m\u00b3/h)', 'Rec.\n(%)', 'P_feed\n(bar)', 'TDS\n(mg/L)',
-              'SEC\n(kWh/m\u00b3)', 'NPF', 'NSP', 'FRI', 'CIP', 'Repl.']],
+            [['Year', 'Qp\n(m³/h)', 'Rec.\n(%)', 'P_feed\n(bar)', 'TDS\n(mg/L)',
+              'SEC\n(kWh/m³)', 'NPF', 'NSP', 'FRI', 'CIP', 'Repl.']],
             table_rows,
             col_widths=[1.0, 1.5, 1.3, 1.5, 1.5, 1.8, 1.3, 1.3, 1.5, 1.0, 1.0]
         )
@@ -1702,7 +1814,7 @@ class ReportGenerator:
         _heading(doc, f'Fouling Resistance Breakdown at Year {selected_year}', size=11)
         rf_sum = sel.get('rc_avg', 0) + sel.get('rb_avg', 0) + sel.get('rs_avg', 0) + sel.get('rn_avg', 0)
         _data_table(doc,
-            [['Fouling Mechanism', 'Resistance (m\u207b\u00b9)', 'Relative Contribution']],
+            [['Fouling Mechanism', 'Resistance (m⁻¹)', 'Relative Contribution']],
             [
                 ['Colloidal Cake (Rc)', f"{sel.get('rc_avg', 0):.3e}",
                  f"{sel.get('rc_avg', 0) / max(rf_sum, 1e-10) * 100:.1f}%"],
@@ -1726,22 +1838,22 @@ class ReportGenerator:
         _data_table(doc,
             [['Mineral', 'Bulk SI (Feed)', 'Wall SI (Year 0)', f'Wall SI (Year {selected_year})', 'Risk']],
             [
-                ['Calcite (CaCO\u2083)',
+                ['Calcite (CaCO₃)',
                  f"{base.get('si_calcite_wall', 0):.2f}",
                  f"{base.get('si_calcite_wall', 0):.2f}",
                  f"{sel.get('si_calcite_wall', 0):.2f}",
                  'HIGH' if sel.get('si_calcite_wall', 0) > 0 else 'LOW'],
-                ['Gypsum (CaSO\u2084)',
+                ['Gypsum (CaSO₄)',
                  f"{base.get('si_gypsum_wall', 0):.2f}",
                  f"{base.get('si_gypsum_wall', 0):.2f}",
                  f"{sel.get('si_gypsum_wall', 0):.2f}",
                  'HIGH' if sel.get('si_gypsum_wall', 0) > 0 else 'LOW'],
-                ['Barite (BaSO\u2084)',
+                ['Barite (BaSO₄)',
                  f"{base.get('si_barite_wall', 0):.2f}",
                  f"{base.get('si_barite_wall', 0):.2f}",
                  f"{sel.get('si_barite_wall', 0):.2f}",
                  'HIGH' if sel.get('si_barite_wall', 0) > 0 else 'LOW'],
-                ['Silica (SiO\u2082)',
+                ['Silica (SiO₂)',
                  f"{base.get('si_silica_wall', 0):.2f}",
                  f"{base.get('si_silica_wall', 0):.2f}",
                  f"{sel.get('si_silica_wall', 0):.2f}",
@@ -1816,6 +1928,9 @@ class ReportGenerator:
         mem1         = sr.get('ro_membrane', '—')
         mem2         = sr.get('pass2_membrane', mem1)
 
+        # Ions actually fed to pass 1 (treated + recycle) - one basis for every table
+        pass_feed_ions = _pass_feed_ions(sr)
+
         # ── Page 1 ────────────────────────────────────────────────────────────
         if sr.get('uf_results') and 'UF' in train:
             self._page_uf_overview(doc, sr)
@@ -1831,7 +1946,7 @@ class ReportGenerator:
 
         # ── Page 3: Ion analysis ──────────────────────────────────────────────
         if ro_main:
-            self._page_ion_analysis(doc, ro_main, fw)
+            self._page_ion_analysis(doc, ro_main, fw, feed_ions=pass_feed_ions)
 
         # ── Chemical dosing & degasser (only when configured) ───────────────
         self._page_chemicals_degasser(doc, sr)
@@ -1843,6 +1958,8 @@ class ReportGenerator:
             ro_main['concentrate_si'] = sr.get('concentrate_si')
             ro_main['concentrate_ph'] = sr.get('concentrate_ph')
             ro_main['feed_si'] = sr.get('feed_si')
+            ro_main['scaling_analysis'] = sr.get('scaling_analysis')
+            ro_main['feed_ions'] = pass_feed_ions        # FIX 23 Nov: conductivity on the pass-feed ions
         self._page_warnings(doc, ro_main or {}, pass2_res)
 
         # ── Page 6: Economics ────────────────────────────────────────────────
