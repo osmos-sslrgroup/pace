@@ -2941,6 +2941,50 @@
         if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
     })();
     </script>
+    <!-- ===== Feed pre-treatment pH adjustment -> RO feed (added 23 Nov 2026) =====
+         Paste just before </body>, AFTER the other add-on script blocks (antiscalant, elements per stage).
+         Reads the RO Design "Feed Pre-treatment pH Adjustment" fields
+            calc-feed-ph-enable (checkbox), calc-feed-ph-chem (select), calc-feed-target-ph (input)
+         and sends them as  conditioning.feed_conditioning = {enabled, chemical, target_ph, location: "pre"}
+         so the backend doses the RO FEED (before: a flat block without location -> applied to the product). -->
+    <script>
+    (function () {
+        "use strict";
+        const $ = id => document.getElementById(id);
+        const API = /\/api\/(calculate-system|calculate-system-physics|generate-calculation-report|simulate-aging|recommend-membrane|auto-select-membrane)\b/;
+
+        // Feed pre-treatment block from the RO Design fields; null when the fields are not on the page
+        function feedBlock() {
+            const en = $("calc-feed-ph-enable"), chem = $("calc-feed-ph-chem"), tph = $("calc-feed-target-ph");
+            if (!en && !chem && !tph) return null;
+            const enabled = en ? !!en.checked : true;
+            const t = tph ? parseFloat(tph.value) : NaN;
+            const c = chem ? (chem.value || "").trim() : "";
+            return {
+                enabled: enabled && !!c && !isNaN(t),
+                chemical: c || null,
+                target_ph: isNaN(t) ? null : t,
+                location: "pre"
+            };
+        }
+
+        const _fetch = window.fetch.bind(window);
+        window.fetch = function (input, init) {
+            try {
+                const url = typeof input === "string" ? input : (input && input.url) || "";
+                const fb = API.test(url) ? feedBlock() : null;
+                if (fb && init && typeof init.body === "string" && init.body.trim().startsWith("{")) {
+                    const body = JSON.parse(init.body);
+                    const cond = (body.conditioning && typeof body.conditioning === "object") ? body.conditioning : {};
+                    cond.feed_conditioning = fb;                 // explicit RO-feed dosing point
+                    body.conditioning = cond;
+                    init = Object.assign({}, init, { body: JSON.stringify(body) });
+                }
+            } catch (e) { /* send the request unchanged */ }
+            return _fetch(input, init);
+        };
+    })();
+    </script>
 </body>
 </html>
 
