@@ -909,7 +909,7 @@
                         
                         <div class="input-group">
                             <label>Target Recovery <span class="unit">%</span></label>
-                            <input type="number" id="calc-target-recovery" value="75.0" step="1">
+                            <input type="number" id="calc-target-recovery" value="75.0" step="1" min="0">
                         </div>
                     </div>
                     <div id="calc-recycle-container" style="padding: 1rem 16px; border-top: 1px solid var(--card-border);">
@@ -2982,6 +2982,234 @@
                 }
             } catch (e) { /* send the request unchanged */ }
             return _fetch(input, init);
+        };
+    })();
+    </script>
+
+    <!-- ===== Concentrate recycle: manual flow entry + % concentrate recycle (added 24 Nov 2026) =====
+         Paste just before </body>, AFTER the other add-on script blocks
+         (antiscalant, elements per stage, feed pre-treatment).
+
+         What it does
+           - Hides the "Recycle Ratio" slider in the Concentrate Recycle card and puts in its place
+             a number box  "Recycle flow (m³/h)"  that you type, as in Toray DS2.
+           - Shows live, as you type (Toray definitions):
+                 % Concentrate recycle = Qr / (Qr + Qdrain) x 100
+                 Recycle % of feed     = Qr / Qfeed x 100      (for reference)
+                 Feed to pass          = Qfeed + Qr
+                 Pass recovery         = Qproduct / (Qfeed + Qr) x 100
+             with Qproduct = Qfeed x system recovery and Qdrain = Qfeed - Qproduct.
+           - Sends  recycle_flow_m3h  with every calculation request. The backend
+             (system_engine.calculate_system_with_recycle) already uses the flow first,
+             so the run uses exactly the flow typed here.
+           - Recycle flow 0 or "Enable Concentrate Recycle" (calc-recycle-enable) unticked -> no recycle.
+           - Result cards: with recycle on, the top "SYSTEM RECOVERY" card (which shows the pass
+             recovery) is renamed "PASS RECOVERY", and "EFFECTIVE RECOVERY" is renamed
+             "SYSTEM RECOVERY" with its value in white so it can be read.
+           - Only for Technology Train (calc-tech-train) "RO Only" and "UF + RO". For the two-pass
+             trains the original slider comes back (pass-2 concentrate recycled to pass 1).
+
+         Note for UF + RO trains: the backend takes Qfeed as the UF net product, so the
+         % shown here (based on the feed flow typed) can differ slightly from the % in the results. -->
+    <style>
+        #rcy-box { margin-top: 4px; }
+        #rcy-box label { display: block; font-size: 0.85rem; margin-bottom: 4px; }
+        #rcy-flow { width: 100%; padding: 6px 8px; font-size: 0.95rem; }
+        #rcy-out { margin-top: 8px; font-size: 0.82rem; line-height: 1.6; }
+        #rcy-out b { font-family: monospace; font-size: 0.95rem; }
+        #rcy-out .rcy-warn { color: #c0392b; }
+    </style>
+    <script>
+    (function () {
+        "use strict";
+        const $ = id => document.getElementById(id);
+        const API = /\/api\/(calculate-system|calculate-system-physics|generate-calculation-report|simulate-aging|recommend-membrane|auto-select-membrane)\b/;
+        const last = { flow: null, rec: null, recycleOn: false };          // from the last request sent (fallback for the live display)
+
+        // ---- find the recycle controls (slider + enable checkbox) -------------------------------
+        function findSlider() {
+            const ranges = Array.from(document.querySelectorAll('input[type="range"]'));
+            return ranges.find(r => /recycle/i.test((r.id || "") + " " + (r.name || ""))) ||
+                   ranges.find(r => {
+                       const card = r.closest(".card, section, .input-group, div");
+                       return card && /recycle/i.test(card.textContent || "");
+                   }) || null;
+        }
+        function findEnable() {
+            if ($("calc-recycle-enable")) return $("calc-recycle-enable");      // PACE RO Design checkbox
+            const boxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
+            return boxes.find(c => /recycle/i.test((c.id || "") + " " + (c.name || ""))) ||
+                   boxes.find(c => {
+                       const p = c.closest("label, div");
+                       return p && /enable concentrate recycle/i.test(p.textContent || "");
+                   }) || null;
+        }
+
+        // ---- feed flow (m3/h) and system recovery (%) from the page ----------------------------
+        function val(id) { const e = $(id); const v = e ? parseFloat(e.value) : NaN; return isNaN(v) ? null : v; }
+        function feedFlowM3h() {
+            for (const id of ["calc-target-flow", "calc-flow", "target-flow"]) {
+                const v = val(id); if (v !== null) return v;
+            }
+            const q = val("flow");
+            if (q !== null) {
+                const lbl = (($("flow-unit-label") || {}).textContent || "").toLowerCase();
+                if (lbl.includes("gpm")) return q / 4.40287;
+                if (lbl.includes("gpd")) return q / 6340.13;
+                if (lbl.includes("/d")) return q / 24;
+                return q;
+            }
+            return last.flow;
+        }
+        function systemRecoveryPct() {
+            for (const id of ["calc-target-recovery", "recovery"]) {
+                const v = val(id); if (v !== null) return v;
+            }
+            return last.rec;
+        }
+
+        // ---- technology train (calc-tech-train): RO / UF / UF+RO / 2P-RO / UF+2P-RO -------------
+        //   RO, UF+RO      -> recycle flow box (Toray basis, this add-on)
+        //   2P-RO trains   -> PACE's own slider is kept: there the recycle is pass-2 concentrate
+        //                     returned to pass 1, which the two-pass solver handles by ratio
+        //   UF only        -> no RO, recycle not used
+        function trainOf(t) { return (t || ($("calc-tech-train") || {}).value || "RO").toUpperCase(); }
+        function flowMode(t) { t = trainOf(t); return t.includes("RO") && !t.includes("2P"); }
+
+        // ---- Toray recycle balance ------------------------------------------------------------
+        function balance(qf, recPct, qr) {
+            if (!(qf > 0) || !(recPct > 0) || recPct >= 100) return null;
+            const qp = qf * recPct / 100, qd = qf - qp, qpass = qf + qr;
+            return { qp, qd, qpass, pct: qr > 0 ? qr / (qr + qd) * 100 : 0, pctFeed: qr / qf * 100,
+                     passRec: qp / qpass * 100 };
+        }
+        const f2 = v => Number(v).toFixed(2);
+
+        function recycleFlow() {
+            const en = findEnable();
+            if (en && !en.checked) return 0;
+            const v = val("rcy-flow");
+            return v !== null && v > 0 ? v : 0;
+        }
+
+        function render() {
+            const out = $("rcy-out"); if (!out || !flowMode()) return;
+            const qr = val("rcy-flow") || 0, b = balance(feedFlowM3h(), systemRecoveryPct(), qr);
+            if (!b) { out.innerHTML = "Enter the feed flow and target recovery to see the recycle balance."; return; }
+            out.innerHTML =
+                `% Concentrate recycle: <b>${f2(b.pct)} %</b> &nbsp;|&nbsp; Recycle = <b>${f2(b.pctFeed)} %</b> of feed<br>` +
+                `Feed to pass: <b>${f2(b.qpass)}</b> m³/h &nbsp;|&nbsp; Pass recovery: <b>${f2(b.passRec)} %</b><br>` +
+                `Concentrate: total <b>${f2(qr + b.qd)}</b>, to drain <b>${f2(b.qd)}</b> m³/h` +
+                (b.pct >= 95 ? `<br><span class="rcy-warn">Recycle is 95 % or more of the concentrate – reduce the flow.</span>` : "") +
+                (trainOf() === "UF+RO" ? `<br><i>UF + RO: % based on the feed flow; the results use the UF net product.</i>` : "");
+            // keep the old slider in step, so anything else that reads it sees the same ratio
+            const s = findSlider();
+            if (s) { s.value = Math.min(Number(s.max || 100), b.pct); }
+        }
+
+        // ---- build the input box in place of the slider ----------------------------------------
+        function install() {
+            if ($("rcy-box")) return true;
+            const s = findSlider(); if (!s) return false;
+            const holder = s.parentElement;
+            const orig = Array.from(holder.children);                 // label, slider, 0 % / 100 %
+            const box = document.createElement("div");
+            box.id = "rcy-box";
+            box.innerHTML =
+                `<label for="rcy-flow">Recycle flow <span class="unit">m³/h</span></label>` +
+                `<input type="number" id="rcy-flow" min="0" step="0.01" value="0">` +
+                `<div id="rcy-out"></div>`;
+            holder.appendChild(box);
+            function applyMode() {
+                const on = flowMode();
+                orig.forEach(ch => { ch.style.display = on ? "none" : ""; });
+                box.style.display = on ? "" : "none";
+                render();
+            }
+            const tt = $("calc-tech-train"); if (tt) tt.addEventListener("change", applyMode);
+            $("rcy-flow").addEventListener("input", render);
+            document.addEventListener("input", e => {
+                if (e.target && /^(calc-target-flow|calc-flow|target-flow|flow|calc-target-recovery|recovery)$/.test(e.target.id)) render();
+            });
+            const en = findEnable(); if (en) en.addEventListener("change", render);
+            applyMode();
+            return true;
+        }
+        if (!install()) {
+            const mo = new MutationObserver(() => { if (install()) mo.disconnect(); });
+            mo.observe(document.documentElement, { childList: true, subtree: true });
+        }
+
+        // ---- result cards: with recycle the top "SYSTEM RECOVERY" card holds the PASS recovery ----
+        //   recycle on : "SYSTEM RECOVERY" -> "PASS RECOVERY", "EFFECTIVE RECOVERY" -> "SYSTEM RECOVERY"
+        //                (and its value made readable: white on the teal card)
+        //   recycle off: original labels back
+        function leaves(txt) {
+            return Array.from(document.querySelectorAll(".telemetry-label")).filter(e =>
+                e.children.length === 0 && (e.textContent || "").trim().toUpperCase() === txt);
+        }
+        const NEW_TXT = { pass: "PASS RECOVERY", sys: "SYSTEM RECOVERY" };
+        function relabel() {
+            // a label the page has re-rendered since we renamed it counts as not renamed
+            document.querySelectorAll("[data-rcy]").forEach(e => {
+                if ((e.textContent || "").trim().toUpperCase() !== NEW_TXT[e.dataset.rcy]) {
+                    delete e.dataset.rcy; delete e.dataset.rcyOrig;
+                }
+            });
+            if (last.recycleOn) {
+                leaves("SYSTEM RECOVERY").forEach(e => {
+                    if (e.dataset.rcy) return;
+                    e.dataset.rcy = "pass"; e.dataset.rcyOrig = e.textContent; e.textContent = "PASS RECOVERY";
+                });
+                leaves("EFFECTIVE RECOVERY").forEach(e => {
+                    if (e.dataset.rcy) return;
+                    e.dataset.rcy = "sys"; e.dataset.rcyOrig = e.textContent; e.textContent = "SYSTEM RECOVERY";
+                    const v = $("calc-rec-eff-rec");                   // value of that card
+                    if (v) v.style.setProperty("color", "#ffffff", "important");
+                });
+            } else {
+                document.querySelectorAll("[data-rcy]").forEach(e => {
+                    e.textContent = e.dataset.rcyOrig; delete e.dataset.rcy; delete e.dataset.rcyOrig;
+                });
+            }
+        }
+        let relabelQueued = false;
+        new MutationObserver(() => {
+            if (relabelQueued) return;
+            relabelQueued = true;
+            setTimeout(() => { relabelQueued = false; relabel(); }, 50);
+        }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+
+        // ---- send the typed recycle flow with every calculation --------------------------------
+        const _fetch = window.fetch.bind(window);
+        window.fetch = function (input, init) {
+            try {
+                const url = typeof input === "string" ? input : (input && input.url) || "";
+                if (API.test(url) && $("rcy-box") && init && typeof init.body === "string" && init.body.trim().startsWith("{")) {
+                    const body = JSON.parse(init.body);
+                    if (!flowMode(body.technology_train)) {                            // 2P-RO / UF: unchanged
+                        last.recycleOn = false; setTimeout(relabel, 0);
+                        return _fetch(input, init);
+                    }
+                    if (body.target_flow_m3h) last.flow = Number(body.target_flow_m3h);
+                    if (body.target_recovery_pct) last.rec = Number(body.target_recovery_pct);
+                    const qr = recycleFlow();
+                    const b = balance(Number(body.target_flow_m3h) || feedFlowM3h(),
+                                      Number(body.target_recovery_pct) || systemRecoveryPct(), qr);
+                    const ratio = qr > 0 && b ? b.pct / 100 : 0;
+                    last.recycleOn = qr > 0;
+                    body.recycle_flow_m3h = qr > 0 ? qr : null;           // the backend uses this first
+                    body.recycle_enabled = qr > 0;
+                    body.recycle_ratio = ratio;
+                    body.recycle = Object.assign({}, body.recycle || {}, { enabled: qr > 0, recycle_ratio: ratio });
+                    init = Object.assign({}, init, { body: JSON.stringify(body) });
+                    setTimeout(render, 0);
+                }
+            } catch (e) { /* send the request unchanged */ }
+            const pr = _fetch(input, init);
+            // relabel once the page has drawn the results
+            pr.then(() => { setTimeout(relabel, 150); setTimeout(relabel, 800); }, () => {});
+            return pr;
         };
     })();
     </script>
