@@ -1,6 +1,18 @@
 """
 Membrane Database for PACE Calculation Module
 Contains specifications for RO, NF, and UF elements.
+
+28 Nov 2026 - DATASHEET CORRECTIONS (Permionics datasheets HPA 4040, HPA RO-8040-LF-WW, HPARO-8040-BW-400)
+  * min_conc_flow_m3h 4.5 -> 3.63 for the Permionics 8" BWRO elements: datasheet gives 16 gpm = 3.63 m3/h
+    (the printed "4.5 m3/h" is a conversion error). calc_engine uses the water-type table when a
+    water type is sent; this value is the fallback.
+  * LF-WW / BW-400: max_dp_per_element_bar 1.0 (15 psi), RO-permeate flux 21-25 gfd (35.7-42.5 LMH),
+    min. rejection 99.5 %; LF-WW turbidity 3.0 NTU; BW-400 CIP pH 1-12. Datasheet-card min. rejection
+    99.5 % for HPA 4040, LF-WW, BW-400 (display only).
+  * HELD (need refit with the calibrated calc engine): LF-WW feed spacer (datasheet 34 mil) and the
+    datasheet-card permeate flows (LF-WW 41.6, BW-400 41.5, HPA 4040 10.6 m3/d). permeability_A was
+    fitted to the card flows, and beta is calibrated with an effective spacer (as TM720D: 34 -> 28).
+  * SWRO elements keep 4.5 until their datasheets are checked.
 """
 
 from typing import Dict, Any
@@ -228,17 +240,18 @@ class MembraneDatabase:
             "feed_spacer_mil": 31,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 16.0,
-            "min_conc_flow_m3h": 4.5,
+            "min_conc_flow_m3h": 3.63,   # 28 Nov 2026: datasheet 16 gpm = 3.63 m3/h (printed 4.5 m3/h is a conversion error)
             "max_recovery_pct": 15.0,
+            "max_dp_per_element_bar": 1.0,   # datasheet 15 psi (0.1 MPa)
             "length_m": 1.016,
             "diameter_m": 0.201,
             "nominal_rejection": 0.997,
-            "min_rejection": 0.996,
+            "min_rejection": 0.995,
             "flags": ['LF'],
             "max_temp_c": 45.0,
             "ph_range": [2.0, 11.0],
             "cip_ph_range": [1.0, 13.0],
-            "max_turbidity_ntu": 1.0,
+            "max_turbidity_ntu": 3.0,   # datasheet
             "max_sdi_15": 5.0,
             "max_chlorine_mgL": 0.1,
             "design_flux_guidelines": {
@@ -249,7 +262,7 @@ class MembraneDatabase:
                 "surface_water_sdi5": {'sdi_max': 5, 'flux_min_lmh': 20.4, 'flux_max_lmh': 27.2},
                 "surface_water_sdi3": {'sdi_max': 3, 'flux_min_lmh': 22.1, 'flux_max_lmh': 28.9},
                 "well_water": {'sdi_max': 3, 'flux_min_lmh': 22.1, 'flux_max_lmh': 28.9},
-                "ro_permeate": {'sdi_max': 1, 'flux_min_lmh': 35.7, 'flux_max_lmh': 51.0},
+                "ro_permeate": {'sdi_max': 1, 'flux_min_lmh': 35.7, 'flux_max_lmh': 42.5},   # datasheet 21-25 gfd
             },
             "saturation_limits": {
                 "LSI": 1.5,
@@ -270,7 +283,7 @@ class MembraneDatabase:
             "feed_spacer_mil": 31,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 16.0,
-            "min_conc_flow_m3h": 4.5,
+            "min_conc_flow_m3h": 3.63,   # 28 Nov 2026: datasheet 16 gpm = 3.63 m3/h (printed 4.5 m3/h is a conversion error)
             "max_recovery_pct": 15.0,
             "length_m": 1.016,
             "diameter_m": 0.201,
@@ -312,7 +325,7 @@ class MembraneDatabase:
             "feed_spacer_mil": 28,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 16.0,
-            "min_conc_flow_m3h": 4.5,
+            "min_conc_flow_m3h": 3.63,   # 28 Nov 2026: datasheet 16 gpm = 3.63 m3/h (printed 4.5 m3/h is a conversion error)
             "max_recovery_pct": 15.0,
             "length_m": 1.016,
             "diameter_m": 0.201,
@@ -354,16 +367,17 @@ class MembraneDatabase:
             "feed_spacer_mil": 31,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 16.0,
-            "min_conc_flow_m3h": 4.5,
+            "min_conc_flow_m3h": 3.63,   # 28 Nov 2026: datasheet 16 gpm = 3.63 m3/h (printed 4.5 m3/h is a conversion error)
             "max_recovery_pct": 15.0,
+            "max_dp_per_element_bar": 1.0,   # datasheet 15 psi (0.1 MPa)
             "length_m": 1.016,
             "diameter_m": 0.201,
             "nominal_rejection": 0.997,
-            "min_rejection": 0.996,
+            "min_rejection": 0.995,
             "flags": [],
             "max_temp_c": 45.0,
             "ph_range": [2.0, 11.0],
-            "cip_ph_range": [1.0, 13.0],
+            "cip_ph_range": [1.0, 12.0],   # datasheet
             "max_turbidity_ntu": 1.0,
             "max_sdi_15": 5.0,
             "max_chlorine_mgL": 0.1,
@@ -375,7 +389,7 @@ class MembraneDatabase:
                 "surface_water_sdi5": {'sdi_max': 5, 'flux_min_lmh': 20.4, 'flux_max_lmh': 27.2},
                 "surface_water_sdi3": {'sdi_max': 3, 'flux_min_lmh': 22.1, 'flux_max_lmh': 28.9},
                 "well_water": {'sdi_max': 3, 'flux_min_lmh': 22.1, 'flux_max_lmh': 28.9},
-                "ro_permeate": {'sdi_max': 1, 'flux_min_lmh': 35.7, 'flux_max_lmh': 51.0},
+                "ro_permeate": {'sdi_max': 1, 'flux_min_lmh': 35.7, 'flux_max_lmh': 42.5},   # datasheet 21-25 gfd
             },
             "saturation_limits": {
                 "LSI": 1.5,
@@ -396,7 +410,7 @@ class MembraneDatabase:
             "feed_spacer_mil": 31,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 16.0,
-            "min_conc_flow_m3h": 4.5,
+            "min_conc_flow_m3h": 3.63,   # 28 Nov 2026: datasheet 16 gpm = 3.63 m3/h (printed 4.5 m3/h is a conversion error)
             "max_recovery_pct": 15.0,
             "length_m": 1.016,
             "diameter_m": 0.201,
@@ -438,7 +452,7 @@ class MembraneDatabase:
             "feed_spacer_mil": 31,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 16.0,
-            "min_conc_flow_m3h": 4.5,
+            "min_conc_flow_m3h": 3.63,   # 28 Nov 2026: datasheet 16 gpm = 3.63 m3/h (printed 4.5 m3/h is a conversion error)
             "max_recovery_pct": 15.0,
             "length_m": 1.016,
             "diameter_m": 0.201,
@@ -480,7 +494,7 @@ class MembraneDatabase:
             "feed_spacer_mil": 31,
             "max_pressure_bar": 41.4,
             "max_feed_flow_m3h": 16.0,
-            "min_conc_flow_m3h": 4.5,
+            "min_conc_flow_m3h": 3.63,   # 28 Nov 2026: datasheet 16 gpm = 3.63 m3/h (printed 4.5 m3/h is a conversion error)
             "max_recovery_pct": 15.0,
             "length_m": 1.016,
             "diameter_m": 0.201,
@@ -1092,7 +1106,7 @@ class MembraneDatabase:
         "HPA-4040": {
             "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
             "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 9.1,
-            "nominal_rejection_pct": 99.60, "min_rejection_pct": 99.40, "is_estimate": False
+            "nominal_rejection_pct": 99.60, "min_rejection_pct": 99.50, "is_estimate": False
         },
         "HPA-RO-8040": {
             "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
@@ -1102,12 +1116,12 @@ class MembraneDatabase:
         "HPA-RO-8040-LF-WW": {
             "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
             "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 38.0,
-            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.60, "is_estimate": False
+            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.50, "is_estimate": False
         },
         "HPARO-8040-BW-400": {
             "test_solution": "2,000 ppm NaCl", "test_pressure_psi": 225.0, "test_pressure_bar": 15.51,
             "test_recovery_pct": 15.0, "test_temp_c": 25.0, "permeate_flow_m3d": 40.0,
-            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.60, "is_estimate": False
+            "nominal_rejection_pct": 99.70, "min_rejection_pct": 99.50, "is_estimate": False
         },
         "SWRO-8040-400": {
             "test_solution": "32,000 ppm NaCl", "test_pressure_psi": 800.0, "test_pressure_bar": 55.16,
