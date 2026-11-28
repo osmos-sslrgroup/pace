@@ -932,7 +932,7 @@ class ROEngine:
                 target_ndp = max(0.5, avg_stage_ndp) # ensure at least positive NDP
                 
                 permeate_backpressure = permeate_pressure_bar  # bar
-                piping_loss = 0.5  # bar, inter-stage piping friction
+                piping_loss = 0.0  # bar, inter-stage piping friction
                 
                 p_required = pi_conc + target_ndp + permeate_backpressure
                 p_available = stage_exit_pressure - piping_loss
